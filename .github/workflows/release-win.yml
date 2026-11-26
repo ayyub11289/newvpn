@@ -43,6 +43,8 @@ jobs:
           }
 
       - name: Fetch official sing-box & wintun core binaries
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run fetch-core
 
       - name: Generate Windows application icon

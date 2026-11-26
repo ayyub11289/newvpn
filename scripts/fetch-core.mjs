@@ -4,12 +4,18 @@
  */
 import fs from 'node:fs';
 import path from 'node:path';
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const binDir = path.resolve(__dirname, '../resources/bin');
 fs.mkdirSync(binDir, { recursive: true });
+
+function extractZip(zipPath, extractDir) {
+  fs.rmSync(extractDir, { recursive: true, force: true });
+  fs.mkdirSync(extractDir, { recursive: true });
+  execFileSync('tar', ['-xf', zipPath, '-C', extractDir], { stdio: 'inherit' });
+}
 
 async function downloadFile(url, dest) {
   console.log(`[VEIL] Downloading ${url}`);
@@ -26,9 +32,11 @@ async function main() {
     console.log('[VEIL] sing-box.exe already exists in resources/bin/. Skipping.');
   } else {
     console.log('[VEIL] Querying latest sing-box release from GitHub...');
-    const relRes = await fetch('https://api.github.com/repos/SagerNet/sing-box/releases/latest', {
-      headers: { 'User-Agent': 'VEIL-VPN-Fetcher/1.0' }
-    });
+    const headers = { 'User-Agent': 'VEIL-VPN-Fetcher/1.0' };
+    if (process.env.GH_TOKEN) {
+      headers.Authorization = `Bearer ${process.env.GH_TOKEN}`;
+    }
+    const relRes = await fetch('https://api.github.com/repos/SagerNet/sing-box/releases/latest', { headers });
     if (!relRes.ok) throw new Error(`Failed to fetch sing-box release info: HTTP ${relRes.status}`);
     const release = await relRes.json();
     const asset = (release.assets || []).find(
@@ -40,8 +48,7 @@ async function main() {
     await downloadFile(asset.browser_download_url, zipPath);
 
     const extractDir = path.join(binDir, '_extract_sb');
-    fs.rmSync(extractDir, { recursive: true, force: true });
-    execSync(`powershell -NoProfile -Command "Expand-Archive -Path '${zipPath}' -DestinationPath '${extractDir}' -Force"`);
+    extractZip(zipPath, extractDir);
 
     const entries = fs.readdirSync(extractDir, { recursive: true });
     const found = entries.find((e) => String(e).endsWith('sing-box.exe'));
@@ -58,8 +65,7 @@ async function main() {
     const wtZip = path.join(binDir, 'wintun-0.14.1.zip');
     await downloadFile('https://www.wintun.net/builds/wintun-0.14.1.zip', wtZip);
     const wtDir = path.join(binDir, '_extract_wt');
-    fs.rmSync(wtDir, { recursive: true, force: true });
-    execSync(`powershell -NoProfile -Command "Expand-Archive -Path '${wtZip}' -DestinationPath '${wtDir}' -Force"`);
+    extractZip(wtZip, wtDir);
     const dllSrc = path.join(wtDir, 'wintun', 'bin', 'amd64', 'wintun.dll');
     if (fs.existsSync(dllSrc)) {
       fs.copyFileSync(dllSrc, wintunPath);
