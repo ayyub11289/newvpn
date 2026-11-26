@@ -46,7 +46,7 @@ export const DiagnosticsView: React.FC<DiagnosticsViewProps> = ({
     {
       step: 'HOP 01',
       name: takeoverMode === 'tun' ? 'Win11 虚拟网卡 (Ethernet-Net0)' : 'Win11 本地混合代理端口 (127.0.0.1:7890)',
-      meta: takeoverMode === 'tun' ? '172.19.0.1/30 · 内核态 L3 接管' : 'WinINet 注册表守护 · 崩溃自动还原',
+      meta: takeoverMode === 'tun' ? '172.24.88.1/30 · 内核态 L3 接管' : 'WinINet 注册表守护 · 崩溃自动还原',
       ping: '0.4 ms'
     },
     {

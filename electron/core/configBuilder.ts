@@ -106,7 +106,7 @@ export function buildSingBoxConfig(
       type: 'tun',
       tag: 'tun-in',
       interface_name: 'Ethernet-Net0',
-      address: ['172.19.0.1/30'],
+      address: ['172.24.88.1/30'],
       mtu: req.protocol === 'stealth' ? 1380 : 1420,
       auto_route: true,
       strict_route: killSwitch,
@@ -210,7 +210,7 @@ export function buildSingBoxConfig(
     route: {
       rules: routeRules,
       final: 'proxy',
-      auto_detect_interface: true,
+      auto_detect_interface: req.takeoverMode === 'tun',
       default_domain_resolver: 'dns-direct'
     },
     experimental: {

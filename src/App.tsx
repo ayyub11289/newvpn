@@ -88,7 +88,7 @@ export const App: React.FC = () => {
 
   const [updateState, setUpdateState] = useState<UpdateState>({
     status: 'idle',
-    currentVersion: '1.2.0',
+    currentVersion: '1.2.1',
     latestVersion: null,
     releaseUrl: 'https://github.com/ayyub11289/newvpn/releases',
     progress: 0,
