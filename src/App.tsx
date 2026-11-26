@@ -370,7 +370,7 @@ export const App: React.FC = () => {
   );
 
   return (
-    <div className="min-h-screen p-3 md:p-4 relative overflow-x-hidden">
+    <div className="h-screen overflow-hidden flex flex-col relative">
       {/* Ambient Atmospheric Refraction Orbs */}
       <div aria-hidden="true" className="fixed inset-0 pointer-events-none overflow-hidden z-0">
         <div
@@ -395,48 +395,54 @@ export const App: React.FC = () => {
         <div className="noise-overlay absolute inset-0" />
       </div>
 
-      {/* Main Window Shell */}
-      <div className="relative z-10 max-w-7xl mx-auto flex flex-col gap-3.5">
-        <TitleBar
-          tab={tab}
-          onTabChange={(t) => {
-            soundEngine.playTick(900);
-            setTab(t);
-          }}
-          status={status}
-          multiHop={multiHop}
-          activeIp={activeIp}
-          ipMasked={ipMasked}
-          onToggleIpMask={() => {
-            soundEngine.playTick(840);
-            setIpMasked((v) => !v);
-          }}
-          soundEnabled={soundEnabled}
-          onToggleSound={() => {
-            const next = !soundEnabled;
-            soundEngine.enabled = next;
-            setSoundEnabled(next);
-            if (next) soundEngine.playTick(1050);
-            showToast(next ? '硬件触感微音效已开启' : '微音效已静音');
-          }}
-          lightMode={lightMode}
-          onToggleTheme={() => {
-            soundEngine.playTick(920);
-            setLightMode((v) => !v);
-          }}
-          onOpenCmdk={() => {
-            soundEngine.playTick(1020);
-            setCmdkOpen(true);
-          }}
-          onOpenImport={() => {
-            soundEngine.playTick(960);
-            setImportOpen(true);
-          }}
-          capabilities={capabilities}
-          nodeCount={nodes.length}
-        />
+      {/* Fixed Top Window TitleBar */}
+      <div className="relative z-30 shrink-0 px-3 md:px-4 pt-3 md:pt-4 pb-2">
+        <div className="max-w-7xl mx-auto">
+          <TitleBar
+            tab={tab}
+            onTabChange={(t) => {
+              soundEngine.playTick(900);
+              setTab(t);
+            }}
+            status={status}
+            multiHop={multiHop}
+            activeIp={activeIp}
+            ipMasked={ipMasked}
+            onToggleIpMask={() => {
+              soundEngine.playTick(840);
+              setIpMasked((v) => !v);
+            }}
+            soundEnabled={soundEnabled}
+            onToggleSound={() => {
+              const next = !soundEnabled;
+              soundEngine.enabled = next;
+              setSoundEnabled(next);
+              if (next) soundEngine.playTick(1050);
+              showToast(next ? '硬件触感微音效已开启' : '微音效已静音');
+            }}
+            lightMode={lightMode}
+            onToggleTheme={() => {
+              soundEngine.playTick(920);
+              setLightMode((v) => !v);
+            }}
+            onOpenCmdk={() => {
+              soundEngine.playTick(1020);
+              setCmdkOpen(true);
+            }}
+            onOpenImport={() => {
+              soundEngine.playTick(960);
+              setImportOpen(true);
+            }}
+            capabilities={capabilities}
+            nodeCount={nodes.length}
+          />
+        </div>
+      </div>
 
-        {tab === 'overview' && (
+      {/* Independent Scrollable Content Viewport */}
+      <div className="relative z-10 flex-1 min-h-0 overflow-y-auto px-3 md:px-4 pt-1.5 pb-4">
+        <div className="max-w-7xl mx-auto flex flex-col gap-3.5">
+          {tab === 'overview' && (
           <main className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 items-stretch">
             <PowerDial
               status={status}
@@ -590,6 +596,7 @@ export const App: React.FC = () => {
             onOpenBinFolder={() => void window.veilAPI?.openBinFolder()}
           />
         )}
+        </div>
       </div>
 
       <CommandPalette
