@@ -23,7 +23,14 @@ const {
 } = require('../dist-electron/core/winProxyGuard.js');
 const { SecureVault } = require('../dist-electron/core/secureVault.js');
 const { redactSecrets } = require('../dist-electron/core/secretRedactor.js');
-const { runRealLeakAudit } = require('../dist-electron/core/leakAuditor.js');
+const {
+  runRealLeakAudit,
+  isValidHttps204Response,
+  parseCloudflareTraceResponse
+} = require('../dist-electron/core/leakAuditor.js');
+const yaml = require('js-yaml');
+const { validateSchema } = require('app-builder-lib/out/util/config/schemaValidator');
+const electronBuilderSchema = require('app-builder-lib/scheme.json');
 
 function makeTempDir(prefix) {
   return fs.mkdtempSync(path.join(os.tmpdir(), prefix));
@@ -386,6 +393,29 @@ test('1g. Unexpected crash while connected: system-proxy trips Kill Switch; TUN 
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
 
+test('1h. Strict HTTPS reachability parsers reject 302 redirects, 200 HTML portals, and malformed Trace responses', () => {
+  assert.equal(isValidHttps204Response('HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n').ok, true);
+  assert.equal(isValidHttps204Response('HTTP/1.1 302 Found\r\nLocation: http://portal.local/\r\n\r\n').ok, false);
+  assert.equal(isValidHttps204Response('HTTP/1.1 200 OK\r\nContent-Type: text/html\r\n\r\n<html>login</html>').ok, false);
+  assert.equal(isValidHttps204Response('HTTP/1.1 204 No Content\r\n\r\nunexpected-body').ok, false);
+  assert.equal(isValidHttps204Response('GARBAGE').ok, false);
+
+  const goodTrace = parseCloudflareTraceResponse(
+    'HTTP/1.1 200 OK\r\nContent-Type: text/plain\r\n\r\nfl=123f45\nh=1.1.1.1\nip=198.51.100.42\nts=1700000000.000\n'
+  );
+  assert.equal(goodTrace.ok, true);
+  assert.equal(goodTrace.exitIp, '198.51.100.42');
+
+  assert.equal(
+    parseCloudflareTraceResponse('HTTP/1.1 302 Found\r\nLocation: https://evil.example/\r\n\r\nip=1.2.3.4\nts=1\n').ok,
+    false
+  );
+  assert.equal(
+    parseCloudflareTraceResponse('HTTP/1.1 200 OK\r\n\r\n<html>captive portal</html>').ok,
+    false
+  );
+});
+
 // ============================================================================
 // 2. Windows System Proxy Rollback, WinINet Script Quoting & Honest Audit
 // ============================================================================
@@ -485,6 +515,102 @@ test('2b. WinProxyGuard explicitly reports rollback failure and retains backup f
   );
 
   assert.equal(fs.existsSync(guard.getBackupFilePath()), true, 'Backup retained for next-startup recovery');
+
+  fs.rmSync(dataDir, { recursive: true, force: true });
+});
+
+test('2f. Cancel (disconnect) while enableSystemProxy is mid-write never leaves a stale local proxy behind', async () => {
+  const binDir = makeTempDir('veil-bin-');
+  const dataDir = makeTempDir('veil-race-proxy-');
+  const reg = makeMockRegistry({ ProxyEnable: '0x0', ProxyServer: '', ProxyOverride: '' });
+  let releaseSecondWrite = null;
+  let reachedSecondWrite = null;
+  const reachedPromise = new Promise((r) => {
+    reachedSecondWrite = r;
+  });
+
+  const guard = new WinProxyGuard(
+    dataDir,
+    reg.ops({
+      setValue: async (k, _type, v) => {
+        if (k === 'ProxyOverride' && v.includes('172.16.*')) {
+          reachedSecondWrite();
+          await new Promise((resolve) => {
+            releaseSecondWrite = resolve;
+          });
+        }
+        reg.writes.push({ key: k, value: v });
+        reg.store[k] = k === 'ProxyEnable' ? (v === '1' ? '0x1' : '0x0') : v;
+      }
+    })
+  );
+
+  const mgr = new SingBoxManager(binDir, dataDir, () => {}, {
+    proxyGuard: guard,
+    disableTelemetryLoop: true,
+    pickPorts: async () => ({ mixedPort: 17890, socksPort: 17891, clashApiPort: 19190 }),
+    validateConfigStdin: async () => ({ ok: true }),
+    spawnProcess: () => makeFakeChild(),
+    waitForPortListening: async () => true,
+    verifyRemoteReachability: async () => ({ ok: true, exitIp: '198.51.100.88' })
+  });
+
+  const connectPromise = mgr.connect(makeConnectReq(makeRealNode('race-node')));
+  await reachedPromise;
+
+  // User clicks disconnect RIGHT in the middle of writing Windows registry proxy settings
+  const disconnectPromise = mgr.disconnect();
+  releaseSecondWrite();
+
+  await Promise.all([connectPromise, disconnectPromise]);
+
+  assert.equal(mgr.getSnapshot().status, 'disconnected');
+  assert.equal(reg.store.ProxyEnable, '0x0', 'ProxyEnable must be restored to 0');
+  assert.equal(reg.store.ProxyServer, '', 'Dead local proxy port must NOT be left behind');
+  assert.equal(fs.existsSync(guard.getBackupFilePath()), false);
+
+  fs.rmSync(binDir, { recursive: true, force: true });
+  fs.rmSync(dataDir, { recursive: true, force: true });
+});
+
+test('2g. WinProxyGuard serializes concurrent enableSystemProxy + disableSystemProxy even without AbortSignal', async () => {
+  const dataDir = makeTempDir('veil-serial-proxy-');
+  const reg = makeMockRegistry({ ProxyEnable: '0x0', ProxyServer: '', ProxyOverride: '' });
+  let releaseWrite = null;
+  let enteredWrite = null;
+  const entered = new Promise((r) => {
+    enteredWrite = r;
+  });
+
+  const guard = new WinProxyGuard(
+    dataDir,
+    reg.ops({
+      setValue: async (k, _type, v) => {
+        if (k === 'ProxyServer' && v === '127.0.0.1:7890') {
+          enteredWrite();
+          await new Promise((r) => {
+            releaseWrite = r;
+          });
+        }
+        reg.writes.push({ key: k, value: v });
+        reg.store[k] = k === 'ProxyEnable' ? (v === '1' ? '0x1' : '0x0') : v;
+      }
+    })
+  );
+
+  const enableP = guard.enableSystemProxy(7890);
+  await entered;
+  const disableP = guard.disableSystemProxy();
+  releaseWrite();
+
+  await enableP;
+  const disableRes = await disableP;
+
+  assert.equal(disableRes.ok, true);
+  assert.equal(disableRes.restored, true);
+  assert.equal(reg.store.ProxyEnable, '0x0');
+  assert.equal(reg.store.ProxyServer, '');
+  assert.equal(fs.existsSync(guard.getBackupFilePath()), false);
 
   fs.rmSync(dataDir, { recursive: true, force: true });
 });
@@ -642,4 +768,28 @@ test('4a. Core SHA-256 verifier accepts exact digest and aborts on tampered file
   }
 
   fs.rmSync(tmpDir, { recursive: true, force: true });
+});
+
+test('4b. electron-builder.yml and CI signtoolOptions override pass electron-builder 26 schema validation', () => {
+  const rawYml = fs.readFileSync(path.resolve('electron-builder.yml'), 'utf8');
+  const cfg = yaml.load(rawYml);
+  assert.doesNotThrow(() => {
+    validateSchema(electronBuilderSchema, cfg);
+  });
+
+  // Also verify CI override shape (-c.win.signtoolOptions.publisherName=...)
+  const withCiOverride = {
+    ...cfg,
+    win: {
+      ...cfg.win,
+      verifyUpdateCodeSignature: true,
+      signtoolOptions: {
+        ...cfg.win.signtoolOptions,
+        publisherName: 'ACME Security Corp'
+      }
+    }
+  };
+  assert.doesNotThrow(() => {
+    validateSchema(electronBuilderSchema, withCiOverride);
+  });
 });

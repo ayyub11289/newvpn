@@ -37,7 +37,53 @@ export function measureTcpPing(host: string, port: number, timeoutMs = 2200): Pr
 }
 
 /**
- * Probes Cloudflare Trace through the local HTTP CONNECT proxy (127.0.0.1:<port>)
+ * Validates that a raw HTTP/1.x response from Cloudflare /cdn-cgi/trace over HTTPS
+ * has HTTP 200 status and authentic trace fields (ip= plus ts= or fl=).
+ */
+export function parseCloudflareTraceResponse(rawHttp: string): { ok: boolean; exitIp?: string; reason?: string } {
+  const splitIdx = rawHttp.indexOf('\r\n\r\n');
+  const head = splitIdx >= 0 ? rawHttp.slice(0, splitIdx) : rawHttp;
+  const body = splitIdx >= 0 ? rawHttp.slice(splitIdx + 4) : '';
+  const statusLine = head.split('\r\n')[0] || '';
+  const statusMatch = statusLine.match(/^HTTP\/1\.[01]\s+(\d{3})\b/i);
+  if (!statusMatch || statusMatch[1] !== '200') {
+    return { ok: false, reason: `Cloudflare Trace 返回异常状态 (${statusLine || 'empty'})` };
+  }
+  const ipMatch = body.match(/^ip=([0-9a-fA-F.:]+)$/m);
+  const hasTraceField = /^(?:fl|ts|visit_scheme)=.+$/m.test(body);
+  if (!ipMatch || !hasTraceField) {
+    return { ok: false, reason: '远端响应不包含预期 Cloudflare Trace 结构' };
+  }
+  return { ok: true, exitIp: ipMatch[1].trim() };
+}
+
+/**
+ * Validates that a raw HTTP/1.x response from https://www.gstatic.com/generate_204
+ * strictly returns HTTP 204 No Content with an empty body (rejecting 200/3xx redirects or captive portals).
+ */
+export function isValidHttps204Response(rawHttp: string): { ok: boolean; reason?: string } {
+  const splitIdx = rawHttp.indexOf('\r\n\r\n');
+  if (splitIdx < 0) {
+    return { ok: false, reason: 'HTTPS 204 响应不完整' };
+  }
+  const head = rawHttp.slice(0, splitIdx);
+  const body = rawHttp.slice(splitIdx + 4);
+  const statusLine = head.split('\r\n')[0] || '';
+  const statusMatch = statusLine.match(/^HTTP\/1\.[01]\s+(\d{3})\b/i);
+  if (!statusMatch) {
+    return { ok: false, reason: `HTTPS 204 状态行无效 (${statusLine || 'empty'})` };
+  }
+  if (statusMatch[1] !== '204') {
+    return { ok: false, reason: `期望 HTTPS 204 No Content，实际返回 HTTP ${statusMatch[1]}` };
+  }
+  if (body.length > 0) {
+    return { ok: false, reason: 'HTTPS 204 响应包含非空响应体' };
+  }
+  return { ok: true };
+}
+
+/**
+ * Probes Cloudflare Trace strictly over HTTPS through the local HTTP CONNECT proxy (127.0.0.1:<port>)
  * to verify real end-to-end encrypted tunnel connectivity and retrieve the remote exit IP.
  */
 export function probeExitIpViaProxy(
@@ -93,7 +139,7 @@ export function probeExitIpViaProxy(
     const onAbort = () => done({ ok: false, reason: '连接已取消' });
     signal?.addEventListener('abort', onAbort, { once: true });
 
-    const timer = setTimeout(() => done({ ok: false, reason: '经代理访问 1.1.1.1 超时' }), timeoutMs);
+    const timer = setTimeout(() => done({ ok: false, reason: '经代理访问 https://1.1.1.1 超时' }), timeoutMs);
 
     req.on('connect', (res, socket) => {
       rawSock = socket;
@@ -101,23 +147,23 @@ export function probeExitIpViaProxy(
         done({ ok: false, reason: `本地代理 CONNECT 返回 HTTP ${res.statusCode ?? 'unknown'}` });
         return;
       }
-      tlsSock = tls.connect({ socket, servername: '1.1.1.1' }, () => {
+      tlsSock = tls.connect({ socket, servername: '1.1.1.1', rejectUnauthorized: true }, () => {
         tlsSock?.write('GET /cdn-cgi/trace HTTP/1.1\r\nHost: 1.1.1.1\r\nConnection: close\r\n\r\n');
       });
-      let body = '';
+      let rawResp = '';
       tlsSock.on('data', (chunk) => {
-        body += chunk.toString('utf8');
+        rawResp += chunk.toString('utf8');
       });
       tlsSock.on('end', () => {
-        const match = body.match(/^ip=(.+)$/m);
-        if (match && match[1].trim()) {
+        const parsed = parseCloudflareTraceResponse(rawResp);
+        if (parsed.ok) {
           done({
             ok: true,
-            exitIp: match[1].trim(),
+            exitIp: parsed.exitIp,
             latencyMs: Math.max(1, Math.round(performance.now() - startedAt))
           });
         } else {
-          done({ ok: false, reason: '远端响应不包含有效 Trace 数据' });
+          done({ ok: false, reason: parsed.reason });
         }
       });
       tlsSock.on('error', (err) => {
@@ -133,12 +179,13 @@ export function probeExitIpViaProxy(
 }
 
 /**
- * Fallback HTTP 204 reachability probe via the local HTTP proxy (for networks where 1.1.1.1 is filtered).
+ * Fallback HTTPS 204 reachability probe strictly over HTTP CONNECT + verified TLS
+ * to https://www.gstatic.com/generate_204 (rejects plaintext HTTP, 200 HTML, and 3xx redirects).
  */
-function probeHttp204ViaProxy(
+export function probeHttps204ViaProxy(
   proxyPort: number,
-  targetUrl: string,
-  targetHost: string,
+  targetHost = 'www.gstatic.com',
+  targetPath = '/generate_204',
   timeoutMs = 4500,
   signal?: AbortSignal
 ): Promise<{ ok: boolean; latencyMs?: number; reason?: string }> {
@@ -150,15 +197,14 @@ function probeHttp204ViaProxy(
 
     const startedAt = performance.now();
     let settled = false;
+    let tlsSock: tls.TLSSocket | null = null;
+    let rawSock: net.Socket | null = null;
+
     const req = http.request({
       host: '127.0.0.1',
       port: proxyPort,
-      method: 'GET',
-      path: targetUrl,
-      headers: {
-        Host: targetHost,
-        Connection: 'close'
-      }
+      method: 'CONNECT',
+      path: `${targetHost}:443`
     });
 
     const cleanup = () => {
@@ -166,6 +212,16 @@ function probeHttp204ViaProxy(
       signal?.removeEventListener('abort', onAbort);
       try {
         req.destroy();
+      } catch {
+        // ignore
+      }
+      try {
+        tlsSock?.destroy();
+      } catch {
+        // ignore
+      }
+      try {
+        rawSock?.destroy();
       } catch {
         // ignore
       }
@@ -181,28 +237,44 @@ function probeHttp204ViaProxy(
     const onAbort = () => done({ ok: false, reason: '连接已取消' });
     signal?.addEventListener('abort', onAbort, { once: true });
 
-    const timer = setTimeout(() => done({ ok: false, reason: `经代理访问 ${targetHost} 超时` }), timeoutMs);
+    const timer = setTimeout(() => done({ ok: false, reason: `经代理访问 https://${targetHost} 超时` }), timeoutMs);
 
-    req.on('response', (res) => {
-      res.resume();
-      const code = res.statusCode ?? 0;
-      if (code >= 200 && code < 400) {
-        done({ ok: true, latencyMs: Math.max(1, Math.round(performance.now() - startedAt)) });
-      } else {
-        done({ ok: false, reason: `${targetHost} 返回异常状态码 HTTP ${code}` });
+    req.on('connect', (res, socket) => {
+      rawSock = socket;
+      if (res.statusCode !== 200) {
+        done({ ok: false, reason: `本地代理 CONNECT ${targetHost}:443 返回 HTTP ${res.statusCode ?? 'unknown'}` });
+        return;
       }
+      tlsSock = tls.connect({ socket, servername: targetHost, rejectUnauthorized: true }, () => {
+        tlsSock?.write(`GET ${targetPath} HTTP/1.1\r\nHost: ${targetHost}\r\nConnection: close\r\n\r\n`);
+      });
+      let rawResp = '';
+      tlsSock.on('data', (chunk) => {
+        rawResp += chunk.toString('utf8');
+      });
+      tlsSock.on('end', () => {
+        const verified = isValidHttps204Response(rawResp);
+        if (verified.ok) {
+          done({ ok: true, latencyMs: Math.max(1, Math.round(performance.now() - startedAt)) });
+        } else {
+          done({ ok: false, reason: verified.reason });
+        }
+      });
+      tlsSock.on('error', (err) => {
+        done({ ok: false, reason: `备用 HTTPS TLS 握手失败 (${err.message})` });
+      });
     });
 
     req.on('error', (err) => {
-      done({ ok: false, reason: `经代理请求 ${targetHost} 失败 (${err.message})` });
+      done({ ok: false, reason: `经代理连接 https://${targetHost} 失败 (${err.message})` });
     });
     req.end();
   });
 }
 
 /**
- * Verifies that remote internet destinations are actually reachable through the active proxy port
- * before VEIL transitions to "connected / 已保护".
+ * Verifies that remote internet destinations are actually reachable over verified HTTPS
+ * through the active proxy port before VEIL transitions to "connected / 已保护".
  */
 export async function verifyRemoteReachabilityViaProxy(
   proxyPort: number,
@@ -214,7 +286,7 @@ export async function verifyRemoteReachabilityViaProxy(
     return {
       ok: true,
       exitIp: cf.exitIp,
-      probeTarget: '1.1.1.1/cdn-cgi/trace',
+      probeTarget: 'https://1.1.1.1/cdn-cgi/trace',
       latencyMs: cf.latencyMs
     };
   }
@@ -222,24 +294,24 @@ export async function verifyRemoteReachabilityViaProxy(
     return { ok: false, reason: '连接已取消' };
   }
 
-  const gstatic = await probeHttp204ViaProxy(
+  const gstatic = await probeHttps204ViaProxy(
     proxyPort,
-    'http://www.gstatic.com/generate_204',
     'www.gstatic.com',
+    '/generate_204',
     Math.min(timeoutMs, 4500),
     signal
   );
   if (gstatic.ok) {
     return {
       ok: true,
-      probeTarget: 'www.gstatic.com/generate_204',
+      probeTarget: 'https://www.gstatic.com/generate_204',
       latencyMs: gstatic.latencyMs
     };
   }
 
   return {
     ok: false,
-    reason: cf.reason && gstatic.reason ? `${cf.reason}；备用探测 ${gstatic.reason}` : cf.reason || gstatic.reason || '远端不可达'
+    reason: cf.reason && gstatic.reason ? `${cf.reason}；备用 HTTPS 探测 ${gstatic.reason}` : cf.reason || gstatic.reason || '远端不可达'
   };
 }
 

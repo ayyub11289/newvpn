@@ -31,16 +31,18 @@ export class ProxyOperationError extends Error {
   readonly rollbackAttempted: boolean;
   readonly rollbackSucceeded: boolean;
   readonly rollbackError?: string;
+  readonly aborted: boolean;
 
   constructor(
     message: string,
-    opts: { rollbackAttempted: boolean; rollbackSucceeded: boolean; rollbackError?: string }
+    opts: { rollbackAttempted: boolean; rollbackSucceeded: boolean; rollbackError?: string; aborted?: boolean }
   ) {
     super(message);
     this.name = 'ProxyOperationError';
     this.rollbackAttempted = opts.rollbackAttempted;
     this.rollbackSucceeded = opts.rollbackSucceeded;
     this.rollbackError = opts.rollbackError;
+    this.aborted = Boolean(opts.aborted);
   }
 }
 
@@ -116,6 +118,7 @@ export class WinProxyGuard {
   private backupFile: string;
   private active = false;
   private ops: ProxyRegistryOps;
+  private opQueue: Promise<unknown> = Promise.resolve();
 
   constructor(userDataDir: string, ops?: Partial<ProxyRegistryOps>) {
     fs.mkdirSync(userDataDir, { recursive: true });
@@ -129,6 +132,19 @@ export class WinProxyGuard {
     };
   }
 
+  /**
+   * Strictly serializes all mutating Windows proxy operations so concurrent
+   * enable/disable/recover calls can never interleave and leave a dead proxy behind.
+   */
+  private serialize<T>(fn: () => Promise<T>): Promise<T> {
+    const run = this.opQueue.then(fn, fn);
+    this.opQueue = run.then(
+      () => undefined,
+      () => undefined
+    );
+    return run;
+  }
+
   getBackupFilePath(): string {
     return this.backupFile;
   }
@@ -138,23 +154,25 @@ export class WinProxyGuard {
   }
 
   async recoverIfDirty(): Promise<ProxyRestoreResult> {
-    if (this.ops.platform !== 'win32') return { ok: true, restored: false };
-    if (!fs.existsSync(this.backupFile)) return { ok: true, restored: false };
-    try {
-      const data = JSON.parse(fs.readFileSync(this.backupFile, 'utf8')) as ProxySnapshot;
-      if (data.appliedByVeil) {
-        await this.restoreFromSnapshot(data);
+    return this.serialize(async () => {
+      if (this.ops.platform !== 'win32') return { ok: true, restored: false };
+      if (!fs.existsSync(this.backupFile)) return { ok: true, restored: false };
+      try {
+        const data = JSON.parse(fs.readFileSync(this.backupFile, 'utf8')) as ProxySnapshot;
+        if (data.appliedByVeil) {
+          await this.restoreFromSnapshot(data);
+        }
+        fs.unlinkSync(this.backupFile);
+        this.active = false;
+        return { ok: true, restored: true };
+      } catch (err) {
+        return {
+          ok: false,
+          restored: false,
+          error: err instanceof Error ? err.message : String(err)
+        };
       }
-      fs.unlinkSync(this.backupFile);
-      this.active = false;
-      return { ok: true, restored: true };
-    } catch (err) {
-      return {
-        ok: false,
-        restored: false,
-        error: err instanceof Error ? err.message : String(err)
-      };
-    }
+    });
   }
 
   private async readCurrentProxy(): Promise<ProxySnapshot> {
@@ -173,72 +191,109 @@ export class WinProxyGuard {
   }
 
   /**
-   * Applies Windows HKCU system proxy settings.
-   * If ANY registry write step fails, immediately rolls back to the pre-change snapshot
-   * and throws a ProxyOperationError clearly indicating whether rollback succeeded or failed.
+   * Applies Windows HKCU system proxy settings inside the serialized queue.
+   * If ANY registry write step fails or the optional AbortSignal fires mid-write,
+   * immediately rolls back to the pre-change snapshot and throws a ProxyOperationError
+   * clearly indicating whether rollback succeeded or failed.
    */
-  async enableSystemProxy(port: number): Promise<void> {
-    if (this.ops.platform !== 'win32') return;
-
-    let snap: ProxySnapshot;
-    const hadExistingBackup = fs.existsSync(this.backupFile);
-    if (hadExistingBackup) {
-      snap = JSON.parse(fs.readFileSync(this.backupFile, 'utf8')) as ProxySnapshot;
-    } else {
-      snap = await this.readCurrentProxy();
-      fs.writeFileSync(this.backupFile, JSON.stringify(snap, null, 2));
-      restrictFilePermissions(this.backupFile);
-    }
-
-    const override = 'localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;192.168.*;<local>';
-    try {
-      // Write server and override before enabling ProxyEnable to minimize half-configured window
-      await this.ops.setValue('ProxyServer', 'REG_SZ', `127.0.0.1:${port}`);
-      await this.ops.setValue('ProxyOverride', 'REG_SZ', override);
-      await this.ops.setValue('ProxyEnable', 'REG_DWORD', '1');
-      this.ops.notifyWinInet();
-      this.active = true;
-    } catch (writeErr) {
-      const writeMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
-      try {
-        await this.restoreFromSnapshot(snap);
-        if (!hadExistingBackup && fs.existsSync(this.backupFile)) {
-          fs.unlinkSync(this.backupFile);
-        }
-        this.active = false;
-        throw new ProxyOperationError(
-          `写入 Windows 系统代理失败 (${writeMsg})；已自动恢复原系统代理设置。`,
-          { rollbackAttempted: true, rollbackSucceeded: true }
-        );
-      } catch (rbErr) {
-        if (rbErr instanceof ProxyOperationError) throw rbErr;
-        const rbMsg = rbErr instanceof Error ? rbErr.message : String(rbErr);
-        throw new ProxyOperationError(
-          `写入 Windows 系统代理失败 (${writeMsg})，且自动恢复原代理设置失败 (${rbMsg})，请手动检查 Windows 代理设置。`,
-          { rollbackAttempted: true, rollbackSucceeded: false, rollbackError: rbMsg }
-        );
+  async enableSystemProxy(port: number, signal?: AbortSignal): Promise<void> {
+    return this.serialize(async () => {
+      if (this.ops.platform !== 'win32') return;
+      if (signal?.aborted) {
+        throw new ProxyOperationError('连接已取消，未修改 Windows 系统代理。', {
+          rollbackAttempted: false,
+          rollbackSucceeded: true,
+          aborted: true
+        });
       }
-    }
+
+      let snap: ProxySnapshot;
+      const hadExistingBackup = fs.existsSync(this.backupFile);
+      if (hadExistingBackup) {
+        snap = JSON.parse(fs.readFileSync(this.backupFile, 'utf8')) as ProxySnapshot;
+      } else {
+        snap = await this.readCurrentProxy();
+        if (signal?.aborted) {
+          throw new ProxyOperationError('连接已取消，未修改 Windows 系统代理。', {
+            rollbackAttempted: false,
+            rollbackSucceeded: true,
+            aborted: true
+          });
+        }
+        fs.writeFileSync(this.backupFile, JSON.stringify(snap, null, 2));
+        restrictFilePermissions(this.backupFile);
+      }
+
+      const override = 'localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;192.168.*;<local>';
+      const rollback = async (reason: string, aborted = false): Promise<never> => {
+        try {
+          await this.restoreFromSnapshot(snap);
+          if (!hadExistingBackup && fs.existsSync(this.backupFile)) {
+            fs.unlinkSync(this.backupFile);
+          }
+          this.active = false;
+          throw new ProxyOperationError(
+            aborted
+              ? `${reason}；已自动恢复原系统代理设置。`
+              : `写入 Windows 系统代理失败 (${reason})；已自动恢复原系统代理设置。`,
+            { rollbackAttempted: true, rollbackSucceeded: true, aborted }
+          );
+        } catch (rbErr) {
+          if (rbErr instanceof ProxyOperationError) throw rbErr;
+          const rbMsg = rbErr instanceof Error ? rbErr.message : String(rbErr);
+          throw new ProxyOperationError(
+            aborted
+              ? `${reason}，但自动恢复原代理设置失败 (${rbMsg})，请手动检查 Windows 代理设置。`
+              : `写入 Windows 系统代理失败 (${reason})，且自动恢复原代理设置失败 (${rbMsg})，请手动检查 Windows 代理设置。`,
+            { rollbackAttempted: true, rollbackSucceeded: false, rollbackError: rbMsg, aborted }
+          );
+        }
+      };
+
+      try {
+        // Write server and override before enabling ProxyEnable to minimize half-configured window
+        await this.ops.setValue('ProxyServer', 'REG_SZ', `127.0.0.1:${port}`);
+        if (signal?.aborted) {
+          await rollback('写入系统代理期间连接已取消', true);
+        }
+        await this.ops.setValue('ProxyOverride', 'REG_SZ', override);
+        if (signal?.aborted) {
+          await rollback('写入系统代理期间连接已取消', true);
+        }
+        await this.ops.setValue('ProxyEnable', 'REG_DWORD', '1');
+        if (signal?.aborted) {
+          await rollback('启用系统代理后连接已取消', true);
+        }
+        this.ops.notifyWinInet();
+        this.active = true;
+      } catch (writeErr) {
+        if (writeErr instanceof ProxyOperationError) throw writeErr;
+        const writeMsg = writeErr instanceof Error ? writeErr.message : String(writeErr);
+        await rollback(writeMsg, false);
+      }
+    });
   }
 
   async disableSystemProxy(): Promise<ProxyRestoreResult> {
-    if (this.ops.platform !== 'win32') return { ok: true, restored: false };
-    if (!this.active && !fs.existsSync(this.backupFile)) return { ok: true, restored: false };
+    return this.serialize(async () => {
+      if (this.ops.platform !== 'win32') return { ok: true, restored: false };
+      if (!this.active && !fs.existsSync(this.backupFile)) return { ok: true, restored: false };
 
-    try {
-      if (fs.existsSync(this.backupFile)) {
-        const snap = JSON.parse(fs.readFileSync(this.backupFile, 'utf8')) as ProxySnapshot;
-        await this.restoreFromSnapshot(snap);
-        fs.unlinkSync(this.backupFile);
-      } else {
-        await this.restoreFromSnapshot({ proxyEnable: 0, proxyServer: '', proxyOverride: '', appliedByVeil: false });
+      try {
+        if (fs.existsSync(this.backupFile)) {
+          const snap = JSON.parse(fs.readFileSync(this.backupFile, 'utf8')) as ProxySnapshot;
+          await this.restoreFromSnapshot(snap);
+          fs.unlinkSync(this.backupFile);
+        } else {
+          await this.restoreFromSnapshot({ proxyEnable: 0, proxyServer: '', proxyOverride: '', appliedByVeil: false });
+        }
+        this.active = false;
+        return { ok: true, restored: true };
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        return { ok: false, restored: false, error: msg };
       }
-      this.active = false;
-      return { ok: true, restored: true };
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : String(err);
-      return { ok: false, restored: false, error: msg };
-    }
+    });
   }
 
   private async restoreFromSnapshot(snap: ProxySnapshot): Promise<void> {

@@ -521,10 +521,10 @@ export class SingBoxManager {
       this.activePing = remoteRes.latencyMs;
     }
 
-    // Step 3: Apply Windows System Proxy (with automatic rollback on any partial write failure)
+    // Step 3: Apply Windows System Proxy (serialized & abort-aware, with automatic rollback on any partial write failure)
     try {
       if (req.takeoverMode === 'system-proxy') {
-        await this.proxyGuard.enableSystemProxy(this.activePorts.mixedPort);
+        await this.proxyGuard.enableSystemProxy(this.activePorts.mixedPort, abortController.signal);
       } else {
         const restoreRes = await this.proxyGuard.disableSystemProxy();
         if (!restoreRes.ok) {
@@ -532,8 +532,8 @@ export class SingBoxManager {
         }
       }
     } catch (err) {
+      await this.killChildProcess(child);
       if (!isCurrent()) {
-        await this.killChildProcess(child);
         return;
       }
       await this.stopProcessOnly();
@@ -548,9 +548,7 @@ export class SingBoxManager {
     }
 
     if (!isCurrent() || child.exitCode !== null || child.killed) {
-      if (!isCurrent()) {
-        await this.killChildProcess(child);
-      }
+      await this.killChildProcess(child);
       return;
     }
 

@@ -30,9 +30,12 @@ win:
   requestedExecutionLevel: asInvoker
   signAndEditExecutable: true
   verifyUpdateCodeSignature: true
-  publisherName:
-    - VEIL Network
-  rfc3161TimeStampServer: http://timestamp.digicert.com
+  signtoolOptions:
+    signingHashAlgorithms:
+      - sha256
+    publisherName:
+      - VEIL Network
+    rfc3161TimeStampServer: http://timestamp.digicert.com
 nsis:
   artifactName: VEIL-VPN-${version}-win-${arch}-Setup.${ext}
   oneClick: true

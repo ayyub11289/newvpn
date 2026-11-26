@@ -92,7 +92,7 @@ jobs:
         run: |
           npx electron-builder --win --publish never `
             "-c.win.verifyUpdateCodeSignature=true" `
-            "-c.win.publisherName=$env:WIN_PUBLISHER_NAME"
+            "-c.win.signtoolOptions.publisherName=$env:WIN_PUBLISHER_NAME"
 
       - name: Verify Authenticode Signatures on All Release Executables
         shell: pwsh
