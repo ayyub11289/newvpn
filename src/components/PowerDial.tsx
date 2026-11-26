@@ -166,14 +166,14 @@ export const PowerDial: React.FC<PowerDialProps> = ({
               <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
               <line x1="12" y1="2" x2="12" y2="12" />
             </svg>
-            <span className="text-xs font-medium text-[var(--muted-foreground)]">
+            <span className="text-[12.5px] font-medium tracking-wide text-[var(--muted-foreground)]">
               {!activeNode ? '先导入节点' : status === 'connected' ? '点击断开' : status === 'connecting' ? '取消连接' : '一键连接'}
             </span>
           </button>
         </div>
 
-        <div className="relative z-10 mt-1 space-y-1">
-          <h2 className="text-base font-semibold tracking-tight">
+        <div className="relative z-10 mt-1 space-y-1.5 w-full">
+          <h2 className="text-[18px] leading-snug font-semibold tracking-tight">
             {!activeNode
               ? '尚未导入节点'
               : status === 'connected'
@@ -184,7 +184,7 @@ export const PowerDial: React.FC<PowerDialProps> = ({
               ? '正在建立安全隧道...'
               : '当前网络未加密'}
           </h2>
-          <p className="text-xs text-[var(--muted-foreground)]">
+          <p className="text-[12.5px] leading-relaxed text-[var(--muted-foreground)]">
             {!activeNode
               ? '点击上方按钮或右上角「+ 导入节点」添加你的真实节点'
               : status === 'connected'
@@ -198,8 +198,26 @@ export const PowerDial: React.FC<PowerDialProps> = ({
               : '点击上方机械旋钮即可接管系统网络'}
           </p>
           {status === 'disconnected' && lastError && (
-            <div className="mt-2 px-3 py-2 rounded-xl border border-[var(--error)] bg-[var(--secondary)] text-left text-xs text-[var(--error)] break-all">
-              连接失败：{lastError}
+            <div className="mt-2 px-3 py-2.5 rounded-xl border border-[var(--error)]/70 bg-[var(--secondary)]/90 text-left text-[12px] leading-relaxed text-[var(--error)] break-words flex flex-col gap-2">
+              <div>连接失败：{lastError}</div>
+              {!capabilities.isAdmin && takeoverMode === 'tun' && (
+                <div className="flex items-center gap-2 pt-0.5">
+                  <button
+                    type="button"
+                    onClick={onRelaunchAdmin}
+                    className="px-2.5 py-1 rounded-lg bg-[var(--warning)] text-slate-950 text-[11.5px] font-semibold hover:opacity-90 transition cursor-pointer"
+                  >
+                    以管理员提权重启 →
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => onChangeTakeover('system-proxy')}
+                    className="px-2.5 py-1 rounded-lg glass-surface text-[var(--foreground)] text-[11.5px] font-medium hover:opacity-90 transition cursor-pointer"
+                  >
+                    切回系统代理
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -207,7 +225,7 @@ export const PowerDial: React.FC<PowerDialProps> = ({
         {/* Ephemeral Key Strip */}
         <div className="relative z-10 w-full mt-3.5 px-3 py-2 rounded-xl glass-well flex items-center justify-between text-xs font-mono">
           <span className="text-[var(--muted-foreground)]">
-            会话指纹 <span className="text-[var(--foreground)]">{keyHash}</span>
+            会话指纹 <span className="text-[var(--foreground)] font-medium">{keyHash}</span>
           </span>
           <span className="tabular-nums text-[var(--muted-foreground)]">
             {status === 'connected' ? `轮换 ${fmtShort(keyRotateSeconds)}` : '待机中'}
@@ -217,11 +235,11 @@ export const PowerDial: React.FC<PowerDialProps> = ({
         {/* Active Node Summary */}
         <div className="relative z-10 w-full mt-3.5 pt-3.5 border-t border-[var(--card-border)] flex flex-col gap-2 text-left">
           <div className="flex items-center justify-between">
-            <span className="text-xs text-[var(--muted-foreground)]">当前出口节点</span>
+            <span className="text-[11.5px] font-medium tracking-wide text-[var(--muted-foreground)]">当前出口节点</span>
             <button
               type="button"
               onClick={activeNode ? onOpenNodes : onOpenImport}
-              className="text-xs text-[var(--link)] hover:underline cursor-pointer"
+              className="text-xs font-medium text-[var(--link)] hover:underline cursor-pointer"
             >
               {activeNode ? '全部节点 →' : '+ 导入节点 →'}
             </button>
@@ -233,15 +251,15 @@ export const PowerDial: React.FC<PowerDialProps> = ({
                   {activeNode.code}
                 </span>
                 <div className="min-w-0">
-                  <div className="text-xs font-semibold truncate">
+                  <div className="text-[13px] font-semibold tracking-tight truncate">
                     {activeNode.country} · {activeNode.city}
                   </div>
-                  <div className="text-xs font-mono text-[var(--muted-foreground)] truncate">
+                  <div className="text-[11.5px] font-mono tabular-nums text-[var(--muted-foreground)] truncate mt-0.5">
                     {activeNode.host} · {effectivePing} ms
                   </div>
                 </div>
               </div>
-              <span className="text-xs font-mono px-2 py-0.5 rounded-md glass-surface shrink-0">
+              <span className="text-[11px] font-mono font-medium px-2 py-0.5 rounded-md glass-surface shrink-0">
                 {activeNode.protocolType.toUpperCase()}
               </span>
             </div>
@@ -249,7 +267,7 @@ export const PowerDial: React.FC<PowerDialProps> = ({
             <button
               type="button"
               onClick={onOpenImport}
-              className="w-full p-3 rounded-xl glass-well text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition text-center cursor-pointer"
+              className="w-full p-3 rounded-xl glass-well text-[12.5px] text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition text-center cursor-pointer"
             >
               + 点击粘贴订阅链接、JSON 或 WireGuard 配置
             </button>
@@ -261,10 +279,10 @@ export const PowerDial: React.FC<PowerDialProps> = ({
       <div className="glass-surface spotlight-card rounded-2xl p-4 flex flex-col gap-3 flex-1">
         {/* Win11 Takeover Mode Switcher */}
         <div className="relative z-10 flex flex-col gap-1.5">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">接管模式 · WIN11</span>
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">接管模式 · WIN11</span>
             {!capabilities.isAdmin && takeoverMode === 'tun' && (
-              <button type="button" onClick={onRelaunchAdmin} className="text-[var(--warning)] hover:underline cursor-pointer">
+              <button type="button" onClick={onRelaunchAdmin} className="text-[11.5px] font-medium text-[var(--warning)] hover:underline cursor-pointer">
                 需管理员提权 →
               </button>
             )}
@@ -273,7 +291,7 @@ export const PowerDial: React.FC<PowerDialProps> = ({
             <button
               type="button"
               onClick={() => onChangeTakeover('system-proxy')}
-              className={`py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
+              className={`py-1.5 rounded-lg text-[12.5px] font-medium transition cursor-pointer ${
                 takeoverMode === 'system-proxy'
                   ? 'glass-surface text-[var(--foreground)] font-semibold'
                   : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
@@ -284,7 +302,7 @@ export const PowerDial: React.FC<PowerDialProps> = ({
             <button
               type="button"
               onClick={() => onChangeTakeover('tun')}
-              className={`py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
+              className={`py-1.5 rounded-lg text-[12.5px] font-medium transition cursor-pointer ${
                 takeoverMode === 'tun'
                   ? 'glass-surface text-[var(--foreground)] font-semibold'
                   : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
@@ -297,9 +315,9 @@ export const PowerDial: React.FC<PowerDialProps> = ({
 
         {/* Protocol Switcher */}
         <div className="relative z-10 flex flex-col gap-1.5">
-          <div className="flex items-center justify-between text-xs">
-            <span className="font-semibold uppercase tracking-wider text-[var(--muted-foreground)]">隧道协议</span>
-            <span className="font-mono text-[var(--muted-foreground)]">{PROTO_META[protocol].mtu}</span>
+          <div className="flex items-center justify-between text-[11px]">
+            <span className="font-semibold uppercase tracking-[0.08em] text-[var(--muted-foreground)]">隧道协议</span>
+            <span className="font-mono text-[11.5px] text-[var(--muted-foreground)]">{PROTO_META[protocol].mtu}</span>
           </div>
           <div className="grid grid-cols-3 p-1 rounded-xl glass-well gap-1">
             {(['wireguard', 'stealth', 'openvpn'] as ProtocolMode[]).map((p) => (
@@ -307,7 +325,7 @@ export const PowerDial: React.FC<PowerDialProps> = ({
                 key={p}
                 type="button"
                 onClick={() => onChangeProtocol(p)}
-                className={`py-1.5 rounded-lg text-xs font-medium transition cursor-pointer ${
+                className={`py-1.5 rounded-lg text-[12.5px] font-medium transition cursor-pointer ${
                   protocol === p
                     ? 'glass-surface text-[var(--foreground)] font-semibold'
                     : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
@@ -323,13 +341,13 @@ export const PowerDial: React.FC<PowerDialProps> = ({
         <div className="relative z-10 p-3 rounded-xl glass-well flex flex-col gap-2">
           <div className="flex items-center justify-between gap-2">
             <div>
-              <div className="text-xs font-semibold flex items-center gap-1.5">
+              <div className="text-[13px] font-semibold flex items-center gap-1.5">
                 <span>双重跳板 (Multi-Hop)</span>
-                <span className="px-1.5 py-0.5 rounded text-xs font-mono glass-surface text-[var(--muted-foreground)]">
+                <span className="px-1.5 py-0.5 rounded text-[11px] font-mono font-medium glass-surface text-[var(--muted-foreground)]">
                   detour
                 </span>
               </div>
-              <p className="text-xs text-[var(--muted-foreground)] mt-0.5">入口中转后再连出口，彻底隔离身份</p>
+              <p className="text-[11.5px] text-[var(--muted-foreground)] mt-0.5">入口中转后再连出口，彻底隔离身份</p>
             </div>
             <button
               type="button"
@@ -360,16 +378,16 @@ export const PowerDial: React.FC<PowerDialProps> = ({
 
         {/* Micro-Telemetry */}
         <div className="relative z-10 mt-auto grid grid-cols-2 gap-2 text-xs">
-          <div className="p-2.5 rounded-xl glass-well flex flex-col gap-0.5">
-            <span className="text-[var(--muted-foreground)]">已拦截追踪器</span>
-            <span className="font-mono tabular-nums text-sm font-semibold">{blockedCount.toLocaleString()}</span>
+          <div className="p-2.5 rounded-xl glass-well flex flex-col gap-1">
+            <span className="text-[11.5px] text-[var(--muted-foreground)]">已拦截追踪器</span>
+            <span className="font-mono tabular-nums text-[15px] font-semibold tracking-tight">{blockedCount.toLocaleString()}</span>
           </div>
-          <div className="p-2.5 rounded-xl glass-well flex flex-col gap-0.5">
-            <span className="text-[var(--muted-foreground)]">零泄露健康度</span>
+          <div className="p-2.5 rounded-xl glass-well flex flex-col gap-1">
+            <span className="text-[11.5px] text-[var(--muted-foreground)]">零泄露健康度</span>
             <button
               type="button"
               onClick={onOpenDiagnostics}
-              className="text-left font-mono text-sm font-semibold hover:underline cursor-pointer"
+              className="text-left font-mono text-[15px] font-semibold tracking-tight hover:underline cursor-pointer"
               style={{ color: status === 'connected' ? 'var(--success)' : 'var(--muted-foreground)' }}
             >
               {status === 'connected' ? '4/4 PASS →' : '待连接 →'}

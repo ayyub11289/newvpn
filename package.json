@@ -1,6 +1,6 @@
 {
   "name": "veil-vpn-win11",
-  "version": "1.2.1",
+  "version": "1.2.2",
   "author": "VEIL Network",
   "description": "VEIL VPN — Windows 11 Optical Glass Desktop VPN Client powered by sing-box 1.14 & Wintun",
   "main": "dist-electron/main.js",
@@ -18,8 +18,10 @@
     "dist:win": "npm run gen-icon && npm run build && electron-builder --win"
   },
   "dependencies": {
+    "@fontsource/jetbrains-mono": "^5.3.0",
     "electron-updater": "^6.8.11",
     "js-yaml": "^4.1.0",
+    "misans": "^5.0.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },

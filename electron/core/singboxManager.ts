@@ -11,6 +11,29 @@ import { inspectWindowsWifi } from './wifiWatcher';
 
 const execFileAsync = promisify(execFile);
 
+function formatKernelError(raw: string): string {
+  const cleaned = raw
+    .replace(/\u001b\[[0-9;]*[a-zA-Z]/g, '')
+    .replace(/\[[0-9;]{1,6}m/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!cleaned) return '内核启动异常退出';
+  if (/configure tun interface.*access is denied/i.test(cleaned)) {
+    return 'TUN 虚拟网卡需要管理员权限：请点击下方「以管理员提权重启」，或切换至「系统代理（免提权）」模式。';
+  }
+  if (/wintun/i.test(cleaned) && /(not found|cannot find|failed|load)/i.test(cleaned)) {
+    return '未加载到 Wintun 驱动组件，请切换至「系统代理（免提权）」模式或重新安装完整版。';
+  }
+  if (/address already in use|only one usage of each socket address/i.test(cleaned)) {
+    return '本地代理端口被占用，请先关闭其他正在运行的 VPN / 代理软件后重试。';
+  }
+  if (/connectex.*access permissions/i.test(cleaned)) {
+    return 'Windows 拦截了内核出站连接，请先退出其他 VPN/TUN 客户端后重试。';
+  }
+  return cleaned.slice(-220);
+}
+
 function isPortFree(port: number): Promise<boolean> {
   return new Promise((resolve) => {
     const srv = net.createServer();
@@ -163,7 +186,7 @@ export class SingBoxManager {
       return { ok: true };
     } catch (err) {
       const e = err as { stderr?: string; message?: string };
-      return { ok: false, error: (e.stderr || e.message || 'sing-box check failed').trim().slice(0, 220) };
+      return { ok: false, error: formatKernelError(e.stderr || e.message || 'sing-box check failed') };
     }
   }
 
@@ -247,7 +270,7 @@ export class SingBoxManager {
 
       child.stderr?.on('data', (chunk: Buffer) => {
         const msg = chunk.toString('utf8').trim();
-        if (msg) stderrTail = msg.slice(-220);
+        if (msg) stderrTail = formatKernelError(msg);
       });
 
       child.on('exit', (code, signal) => {

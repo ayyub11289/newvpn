@@ -150,10 +150,10 @@ export const NodesView: React.FC<NodesViewProps> = ({
                         {n.code}
                       </span>
                       <div className="min-w-0">
-                        <div className="text-xs font-semibold truncate">
+                        <div className="text-[13px] font-semibold tracking-tight truncate">
                           {n.country} · {n.city}
                         </div>
-                        <div className="text-xs font-mono text-[var(--muted-foreground)] truncate">
+                        <div className="text-[11.5px] font-mono tabular-nums text-[var(--muted-foreground)] truncate mt-0.5">
                           {n.host}:{n.port}
                         </div>
                       </div>
@@ -193,7 +193,7 @@ export const NodesView: React.FC<NodesViewProps> = ({
                     <button
                       type="button"
                       onClick={() => onSelectNode(n.id)}
-                      className={`w-full py-1.5 rounded-lg text-xs font-medium cursor-pointer transition ${
+                      className={`w-full py-1.5 rounded-lg text-[12.5px] font-medium cursor-pointer transition ${
                         isCurrent && status === 'connected'
                           ? 'glass-surface text-[var(--foreground)]'
                           : 'bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90'

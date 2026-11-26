@@ -79,7 +79,7 @@ export const DiagnosticsView: React.FC<DiagnosticsViewProps> = ({
       <section className="lg:col-span-7 glass-surface spotlight-card rounded-2xl p-5 flex flex-col gap-4">
         <div className="relative z-10 flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h2 className="text-sm font-semibold">实时分段路由透视 · Hop Topology</h2>
+            <h2 className="text-[15px] font-semibold tracking-tight">实时分段路由透视 · Hop Topology</h2>
             <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
               端到端跳数、内核接管状态及本地代理导出
             </p>
@@ -137,7 +137,7 @@ export const DiagnosticsView: React.FC<DiagnosticsViewProps> = ({
       <section className="lg:col-span-5 glass-surface spotlight-card rounded-2xl p-5 flex flex-col gap-4">
         <div className="relative z-10 flex items-center justify-between gap-2">
           <div>
-            <h2 className="text-sm font-semibold">链路实测与策略校验 · Network Audit</h2>
+            <h2 className="text-[15px] font-semibold tracking-tight">链路实测与策略校验 · Network Audit</h2>
             <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
               严格区分「实网探针结果」与「配置策略状态」，绝不虚报结果
             </p>

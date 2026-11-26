@@ -180,12 +180,16 @@ export const TrayPopoverView: React.FC = () => {
 
         <div className="grid grid-cols-2 gap-2 text-xs">
           <div className="glass-well rounded-xl p-2.5">
-            <div className="text-[var(--muted-foreground)]">实时下行</div>
-            <div className="font-mono tabular-nums text-sm font-semibold mt-0.5">{snap.downMBps.toFixed(1)} MB/s</div>
+            <div className="text-[11.5px] text-[var(--muted-foreground)]">实时下行</div>
+            <div className="font-mono tabular-nums text-[15px] font-semibold tracking-tight mt-0.5">
+              {snap.downMBps.toFixed(1)} <span className="text-[11px] font-medium text-[var(--muted-foreground)]">MB/s</span>
+            </div>
           </div>
           <div className="glass-well rounded-xl p-2.5">
-            <div className="text-[var(--muted-foreground)]">实时上行</div>
-            <div className="font-mono tabular-nums text-sm font-semibold mt-0.5">{snap.upMBps.toFixed(1)} MB/s</div>
+            <div className="text-[11.5px] text-[var(--muted-foreground)]">实时上行</div>
+            <div className="font-mono tabular-nums text-[15px] font-semibold tracking-tight mt-0.5">
+              {snap.upMBps.toFixed(1)} <span className="text-[11px] font-medium text-[var(--muted-foreground)]">MB/s</span>
+            </div>
           </div>
         </div>
 

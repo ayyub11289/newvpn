@@ -130,37 +130,52 @@ export const TelemetrySpline: React.FC<TelemetrySplineProps> = ({
       <div className="relative z-10 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-5">
           <div>
-            <div className="text-xs text-[var(--muted-foreground)] flex items-center gap-1.5">
+            <div className="text-[11.5px] font-medium tracking-wide text-[var(--muted-foreground)] flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full" style={{ background: 'var(--success)', boxShadow: '0 0 6px var(--success)' }} />
-              实时下行 (Download)
+              实时下行 · Download
             </div>
-            <div className="font-mono tabular-nums text-base font-semibold mt-0.5">{downSpeed.toFixed(1)} MB/s</div>
+            <div className="font-mono tabular-nums text-[20px] leading-tight font-semibold tracking-tight mt-1">
+              {downSpeed.toFixed(1)}
+              <span className="text-xs font-medium text-[var(--muted-foreground)] ml-1">MB/s</span>
+            </div>
           </div>
-          <div className="h-7 w-px bg-[var(--border)]" />
+          <div className="h-8 w-px bg-[var(--border)]" />
           <div>
-            <div className="text-xs text-[var(--muted-foreground)] flex items-center gap-1.5">
+            <div className="text-[11.5px] font-medium tracking-wide text-[var(--muted-foreground)] flex items-center gap-1.5">
               <span className="w-2 h-2 rounded-full" style={{ background: 'var(--primary)', boxShadow: '0 0 6px var(--primary)' }} />
-              实时上行 (Upload)
+              实时上行 · Upload
             </div>
-            <div className="font-mono tabular-nums text-base font-semibold mt-0.5">{upSpeed.toFixed(1)} MB/s</div>
+            <div className="font-mono tabular-nums text-[20px] leading-tight font-semibold tracking-tight mt-1">
+              {upSpeed.toFixed(1)}
+              <span className="text-xs font-medium text-[var(--muted-foreground)] ml-1">MB/s</span>
+            </div>
           </div>
-          <div className="hidden sm:block h-7 w-px bg-[var(--border)]" />
+          <div className="hidden sm:block h-8 w-px bg-[var(--border)]" />
           <div className="hidden sm:block">
-            <div className="text-xs text-[var(--muted-foreground)]">隧道延迟 / 抖动</div>
-            <div className="font-mono tabular-nums text-base font-semibold mt-0.5">
-              {status === 'connected' ? `${effectivePing} ms · ±1.2 ms` : '-- ms · --'}
+            <div className="text-[11.5px] font-medium tracking-wide text-[var(--muted-foreground)]">隧道延迟 / 抖动</div>
+            <div className="font-mono tabular-nums text-[20px] leading-tight font-semibold tracking-tight mt-1">
+              {status === 'connected' ? (
+                <>
+                  {effectivePing}
+                  <span className="text-xs font-medium text-[var(--muted-foreground)] ml-1">ms · ±1.2 ms</span>
+                </>
+              ) : (
+                <>
+                  --<span className="text-xs font-medium text-[var(--muted-foreground)] ml-1">ms</span>
+                </>
+              )}
             </div>
           </div>
         </div>
 
         <div className="flex items-center gap-2.5">
           <span className="text-xs font-mono tabular-nums text-[var(--muted-foreground)]">
-            会话流量: {totalGB.toFixed(2)} GB
+            会话流量: <span className="text-[var(--foreground)] font-medium">{totalGB.toFixed(2)} GB</span>
           </span>
           <button
             type="button"
             onClick={onTriggerBurst}
-            className="px-3 py-1.5 rounded-xl text-xs font-medium glass-well hover:opacity-90 transition cursor-pointer"
+            className="px-3 py-1.5 rounded-xl text-[12.5px] font-medium glass-well hover:opacity-90 transition cursor-pointer"
           >
             峰值带宽测试
           </button>

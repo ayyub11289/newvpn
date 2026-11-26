@@ -650,15 +650,15 @@ export const SpatialGlobe: React.FC<SpatialGlobeProps> = ({
                   key={n.id}
                   type="button"
                   onClick={() => onSelectNode(n.id)}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-medium shrink-0 transition cursor-pointer flex items-center gap-1.5 ${
+                  className={`px-2.5 py-1 rounded-lg text-[12.5px] font-medium shrink-0 transition cursor-pointer flex items-center gap-1.5 ${
                     active
                       ? 'glass-surface text-[var(--foreground)] font-semibold'
                       : 'border border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
                   }`}
                 >
-                  <span className="font-mono font-semibold">{n.code}</span>
+                  <span className="font-mono text-[11.5px] font-semibold">{n.code}</span>
                   <span>{n.city}</span>
-                  <span className="font-mono opacity-70">{getEffectivePing(n)}ms</span>
+                  <span className="font-mono tabular-nums text-[11.5px] opacity-75">{getEffectivePing(n)}ms</span>
                 </button>
               );
             })}

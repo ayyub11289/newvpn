@@ -73,8 +73,8 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         </div>
         <div>
           <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold tracking-tight">VEIL</span>
-            <span className="text-xs font-mono px-1.5 py-0.5 rounded-md glass-well text-[var(--muted-foreground)]">
+            <span className="text-[15px] font-semibold tracking-[0.06em]">VEIL</span>
+            <span className="text-[11px] font-mono font-medium px-1.5 py-0.5 rounded-md glass-well text-[var(--muted-foreground)]">
               WIN11 · {capabilities.hasSingBox ? 'LIVE CORE' : 'NO CORE'}
             </span>
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium glass-well">
@@ -88,7 +88,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
               <span>{statusLabel}</span>
             </span>
           </div>
-          <p className="text-xs text-[var(--muted-foreground)]">
+          <p className="text-[11.5px] text-[var(--muted-foreground)] mt-0.5">
             sing-box 加密内核 · {capabilities.isAdmin ? '管理员已就绪 (支持 TUN)' : '标准模式 (免提权代理)'}
           </p>
         </div>
@@ -103,14 +103,14 @@ export const TitleBar: React.FC<TitleBarProps> = ({
               key={t.id}
               type="button"
               onClick={() => onTabChange(t.id)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-medium transition cursor-pointer flex items-center gap-1.5 ${
+              className={`px-3.5 py-1.5 rounded-lg text-[13px] font-medium transition cursor-pointer flex items-center gap-1.5 ${
                 active
                   ? 'glass-surface text-[var(--foreground)] font-semibold'
                   : 'text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
               }`}
             >
               <span>{t.label}</span>
-              {typeof t.count === 'number' && <span className="font-mono opacity-70">{t.count}</span>}
+              {typeof t.count === 'number' && <span className="text-xs font-mono opacity-75">{t.count}</span>}
             </button>
           );
         })}
@@ -121,7 +121,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         <button
           type="button"
           onClick={onOpenImport}
-          className="px-2.5 py-1.5 rounded-xl bg-[var(--primary)] text-[var(--primary-foreground)] text-xs font-medium hover:opacity-90 transition cursor-pointer"
+          className="px-3 py-1.5 rounded-xl bg-[var(--primary)] text-[var(--primary-foreground)] text-[12.5px] font-semibold hover:opacity-90 transition cursor-pointer"
         >
           + 导入节点
         </button>
@@ -138,7 +138,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         <button
           type="button"
           onClick={onToggleSound}
-          className="px-2.5 py-1.5 rounded-xl glass-well text-xs font-medium text-[var(--foreground)] hover:opacity-90 transition cursor-pointer"
+          className="px-2.5 py-1.5 rounded-xl glass-well text-[12.5px] font-medium text-[var(--foreground)] hover:opacity-90 transition cursor-pointer"
           style={{ opacity: soundEnabled ? 1 : 0.6 }}
           title="切换硬件微音效"
         >
@@ -148,7 +148,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
         <button
           type="button"
           onClick={onToggleTheme}
-          className="px-2.5 py-1.5 rounded-xl glass-well text-xs font-medium text-[var(--foreground)] hover:opacity-90 transition cursor-pointer"
+          className="px-2.5 py-1.5 rounded-xl glass-well text-[12.5px] font-medium text-[var(--foreground)] hover:opacity-90 transition cursor-pointer"
           title="切换深色 / 浅色毛玻璃"
         >
           {lightMode ? '深色' : '浅色'}

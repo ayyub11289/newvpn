@@ -34,7 +34,7 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
       <section className="lg:col-span-4 glass-surface spotlight-card rounded-2xl p-5 flex flex-col gap-4">
         <div className="relative z-10 flex items-start justify-between gap-2">
           <div>
-            <h2 className="text-sm font-semibold">场景自动化 · Auto-Pilot</h2>
+            <h2 className="text-[15px] font-semibold tracking-tight">场景自动化 · Auto-Pilot</h2>
             <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
               当前无线网络：{wifiSsid ? wifiSsid : '以太网 / 未连接 Wi-Fi'}
             </p>
@@ -71,7 +71,7 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
       <section className="lg:col-span-4 glass-surface spotlight-card rounded-2xl p-5 flex flex-col gap-4">
         <div className="relative z-10 flex items-start justify-between gap-2">
           <div>
-            <h2 className="text-sm font-semibold">零信任护盾 · Security Shield</h2>
+            <h2 className="text-[15px] font-semibold tracking-tight">零信任护盾 · Security Shield</h2>
             <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
               凭据存储：{encryptedVault ? 'Windows DPAPI 系统级加密 ✓' : '本地保护存储'}
             </p>
@@ -115,7 +115,7 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
       <section className="lg:col-span-4 glass-surface spotlight-card rounded-2xl p-5 flex flex-col gap-4">
         <div className="relative z-10 flex items-center justify-between gap-2">
           <div>
-            <h2 className="text-sm font-semibold">应用级分流 · Split Tunnel</h2>
+            <h2 className="text-[15px] font-semibold tracking-tight">应用级分流 · Split Tunnel</h2>
             <p className="text-xs text-[var(--muted-foreground)] mt-0.5">点击切换「加密代理」与「本地直连」</p>
           </div>
           <span className="text-xs font-mono px-2 py-0.5 rounded-lg glass-well text-[var(--muted-foreground)]">
