@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release version tag (e.g. v1.0.0). Leave empty to use package.json version."
+        description: "Release version tag (e.g. v1.1.0). Leave empty to use package.json version."
         required: false
         default: ""
 
@@ -29,7 +29,8 @@ jobs:
       - name: Install dependencies
         run: npm install
 
-      - name: Sync version with tag if provided
+      - name: Resolve release version and sync package.json
+        id: ver
         shell: pwsh
         run: |
           $tag = "${{ github.event.inputs.release_tag }}"
@@ -37,10 +38,16 @@ jobs:
             $tag = "${{ github.ref_name }}"
           }
           if ($tag) {
-            $ver = $tag.TrimStart("v")
-            npm version $ver --no-git-tag-version --allow-same-version
-            Write-Host "Using release version: $ver"
+            $version = $tag.TrimStart("v")
+            npm version $version --no-git-tag-version --allow-same-version
+          } else {
+            $pkg = Get-Content package.json -Raw | ConvertFrom-Json
+            $version = $pkg.version
+            $tag = "v$version"
           }
+          echo "tag=$tag" >> $env:GITHUB_OUTPUT
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+          Write-Host "Release tag: $tag (version $version)"
 
       - name: Fetch official sing-box & wintun core binaries
         env:
@@ -56,10 +63,27 @@ jobs:
           npm run build
           npm run verify-core-config
 
-      - name: Package Windows Installer & Portable (.exe) and Publish Release
+      - name: Package Windows Installer & Portable (.exe)
+        run: npx electron-builder --win --publish never
+
+      - name: Publish GitHub Release with Installer, Portable & latest.yml
+        shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: npx electron-builder --win --publish always
+        run: |
+          $tag = "${{ steps.ver.outputs.tag }}"
+          $files = @(
+            Get-ChildItem release\*.exe
+            Get-ChildItem release\*.blockmap -ErrorAction SilentlyContinue
+            Get-ChildItem release\latest.yml -ErrorAction SilentlyContinue
+          ) | ForEach-Object { $_.FullName }
+
+          gh release view $tag 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $tag @files --clobber
+          } else {
+            gh release create $tag @files --title "VEIL VPN $tag" --generate-notes
+          }
 
       - name: Upload build artifacts to workflow run
         uses: actions/upload-artifact@v4
