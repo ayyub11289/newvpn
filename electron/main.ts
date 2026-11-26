@@ -20,6 +20,7 @@ import { fetchSubscriptionFromUrl, parseSubscriptionContent } from './core/subsc
 import { measureTcpPing, runRealLeakAudit } from './core/leakAuditor';
 import { AppUpdaterController } from './core/updater';
 import { SecureVault } from './core/secureVault';
+import { redactSecrets } from './core/secretRedactor';
 import { ConnectRequest, TakeoverMode, TelemetrySnapshot, TunnelStatus, UpdateState, VaultState } from './types';
 
 let mainWindow: BrowserWindow | null = null;
@@ -320,7 +321,7 @@ function registerIpc(): void {
       return {
         ok: false,
         nodes: [],
-        message: `订阅拉取失败: ${err instanceof Error ? err.message : String(err)}`
+        message: `订阅拉取失败: ${redactSecrets(err instanceof Error ? err.message : String(err))}`
       };
     }
   });

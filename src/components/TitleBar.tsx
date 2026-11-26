@@ -41,11 +41,13 @@ export const TitleBar: React.FC<TitleBarProps> = ({
     status === 'connected' ? 'var(--success)' : status === 'connecting' ? 'var(--warning)' : 'var(--error)';
   const statusLabel =
     status === 'connected'
-      ? multiHop
+      ? capabilities.engineMode === 'demo'
+        ? '演示沙盒 (未加密)'
+        : multiHop
         ? '双重跳板已保护'
         : '隧道已保护'
       : status === 'connecting'
-      ? '正在握手...'
+      ? '正在握手验证...'
       : '未受保护';
 
   const tabs: Array<{ id: NavTab; label: string; count?: number }> = [

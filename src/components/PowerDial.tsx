@@ -79,9 +79,9 @@ export const PowerDial: React.FC<PowerDialProps> = ({
     status === 'connected' ? 'var(--success)' : status === 'connecting' ? 'var(--primary)' : 'var(--border)';
 
   const stepText = [
-    '1/3 正在编译防泄露配置并执行密钥协商...',
-    '2/3 挂载本地隧道接口与系统路由守卫...',
-    `3/3 验证至 ${activeNode?.city ?? '远端节点'} 的加密出口...`
+    '1/3 正在内存编译配置并通过 stdin 校验内核...',
+    '2/3 启动本地加密内核并等待端口监听...',
+    `3/3 经本地代理实测远端 ${activeNode?.city ?? '节点'} 可达性...`
   ][Math.min(2, handshakeStep)];
 
   return (
@@ -177,22 +177,26 @@ export const PowerDial: React.FC<PowerDialProps> = ({
             {!activeNode
               ? '尚未导入节点'
               : status === 'connected'
-              ? multiHop
+              ? capabilities.engineMode === 'demo'
+                ? '演示沙盒模式（未加密）'
+                : multiHop
                 ? '双重加密跳板运行中'
                 : '加密隧道已建立'
               : status === 'connecting'
-              ? '正在建立安全隧道...'
+              ? '正在建立并验证隧道...'
               : '当前网络未加密'}
           </h2>
           <p className="text-[12.5px] leading-relaxed text-[var(--muted-foreground)]">
             {!activeNode
               ? '点击上方按钮或右上角「+ 导入节点」添加你的真实节点'
               : status === 'connected'
-              ? multiHop && entryNode
-                ? `流量经 ${entryNode.country} 入口中转至 ${activeNode.city}`
+              ? capabilities.engineMode === 'demo'
+                ? '当前为显式演示沙盒，未转发真实网络流量'
+                : multiHop && entryNode
+                ? `流量经 ${entryNode.country} 入口中转至 ${activeNode.city}（远端实测可达）`
                 : takeoverMode === 'tun'
-                ? '虚拟网卡 (Ethernet-Net0) 已接管全系统流量'
-                : 'Win11 系统代理已接管'
+                ? '虚拟网卡 (Ethernet-Net0) 已接管 · 远端实测可达'
+                : 'Win11 系统代理已接管（仅覆盖遵循系统代理的应用）'
               : status === 'connecting'
               ? stepText
               : '点击上方机械旋钮即可接管系统网络'}
@@ -383,14 +387,14 @@ export const PowerDial: React.FC<PowerDialProps> = ({
             <span className="font-mono tabular-nums text-[15px] font-semibold tracking-tight">{blockedCount.toLocaleString()}</span>
           </div>
           <div className="p-2.5 rounded-xl glass-well flex flex-col gap-1">
-            <span className="text-[11.5px] text-[var(--muted-foreground)]">零泄露健康度</span>
+            <span className="text-[11.5px] text-[var(--muted-foreground)]">链路实测与审计</span>
             <button
               type="button"
               onClick={onOpenDiagnostics}
               className="text-left font-mono text-[15px] font-semibold tracking-tight hover:underline cursor-pointer"
-              style={{ color: status === 'connected' ? 'var(--success)' : 'var(--muted-foreground)' }}
+              style={{ color: status === 'connected' && capabilities.engineMode === 'live' ? 'var(--success)' : 'var(--muted-foreground)' }}
             >
-              {status === 'connected' ? '4/4 PASS →' : '待连接 →'}
+              {status === 'connected' && capabilities.engineMode === 'live' ? '远端可达 · 详情 →' : '查看自检 →'}
             </button>
           </div>
         </div>

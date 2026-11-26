@@ -39,6 +39,7 @@ export const App: React.FC = () => {
   const [nodes, setNodes] = useState<VpnNode[]>([]);
   const [subscriptions, setSubscriptions] = useState<SubscriptionProfile[]>([]);
   const [encryptedVault, setEncryptedVault] = useState(true);
+  const [vaultWarning, setVaultWarning] = useState<string | undefined>(undefined);
 
   const [refreshingSubId, setRefreshingSubId] = useState<string | null>(null);
   const [refreshingAllSubs, setRefreshingAllSubs] = useState(false);
@@ -96,10 +97,10 @@ export const App: React.FC = () => {
   });
 
   const [auditItems, setAuditItems] = useState<LeakAuditItem[]>([
-    { id: 'tunnel-probe', title: '隧道端到端连通与出口 IP 实测', detail: '连接真实内核后经 127.0.0.1:7890 实测公网出口 IP', status: 'idle', badge: '待检测', verified: false },
-    { id: 'dns-check', title: '系统 DNS 与隧道解析状态', detail: '检测当前接管模式下的实际 DNS 范围', status: 'idle', badge: '待检测', verified: false },
-    { id: 'killswitch-scope', title: 'Kill Switch 断网保护边界', detail: '展示当前接管模式的崩溃阻断范围', status: 'idle', badge: '待检测', verified: false },
-    { id: 'policy-shield', title: 'NetShield 与浏览器 WebRTC 说明', detail: '展示内核路由规则与外部浏览器防护边界', status: 'idle', badge: '待检测', verified: false }
+    { id: 'tunnel-probe', title: '隧道端到端远端连通实测', detail: '连接真实内核后经 127.0.0.1:7890 实测公网可达性与出口 IP', status: 'idle', badge: '待检测', verified: false, checkType: 'live-probe' },
+    { id: 'dns-check', title: '系统 DNS 与隧道解析范围', detail: '检测当前接管模式下的实际网卡 DNS 与解析范围', status: 'idle', badge: '待检测', verified: false, checkType: 'config-only' },
+    { id: 'killswitch-scope', title: '断线保护 (Kill Switch) 真实保护边界', detail: '仅检查配置：展示系统代理与 TUN 模式的真实保护上限', status: 'idle', badge: '仅检查了配置', verified: false, checkType: 'config-only' },
+    { id: 'policy-shield', title: 'NetShield 与浏览器 WebRTC 说明', detail: '仅检查配置：展示内核路由规则与外部浏览器防护边界', status: 'idle', badge: '仅检查了配置', verified: false, checkType: 'config-only' }
   ]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -159,11 +160,12 @@ export const App: React.FC = () => {
     setAutoStart(auto);
     setUpdateState(upd);
     setEncryptedVault(vault.encryptedAtRest);
+    setVaultWarning(vault.storageWarning);
 
     let customNodes = vault.customNodes;
     let subs = vault.subscriptions;
 
-    // One-time silent migration from v1.0.0 plaintext localStorage to DPAPI vault
+    // One-time migration from v1.0.0 plaintext localStorage to DPAPI vault
     try {
       const legacyNodesRaw = localStorage.getItem(LEGACY_NODES_KEY);
       const legacySubsRaw = localStorage.getItem(LEGACY_SUBS_KEY);
@@ -176,9 +178,13 @@ export const App: React.FC = () => {
           const parsedS = JSON.parse(legacySubsRaw) as SubscriptionProfile[];
           if (Array.isArray(parsedS)) subs = parsedS;
         }
-        await window.veilAPI.updateVault({ customNodes, subscriptions: subs });
-        localStorage.removeItem(LEGACY_NODES_KEY);
-        localStorage.removeItem(LEGACY_SUBS_KEY);
+        const saved = await window.veilAPI.updateVault({ customNodes, subscriptions: subs });
+        setEncryptedVault(saved.encryptedAtRest);
+        setVaultWarning(saved.storageWarning);
+        if (saved.encryptedAtRest) {
+          localStorage.removeItem(LEGACY_NODES_KEY);
+          localStorage.removeItem(LEGACY_SUBS_KEY);
+        }
       }
     } catch {
       // ignore migration errors
@@ -208,6 +214,7 @@ export const App: React.FC = () => {
     if (!window.veilAPI) return;
     return window.veilAPI.onVaultChanged((v) => {
       setEncryptedVault(v.encryptedAtRest);
+      setVaultWarning(v.storageWarning);
       setSubscriptions(v.subscriptions);
       setNodes(v.customNodes);
       setActiveNodeId(v.activeNodeId || v.customNodes[0]?.id || null);
@@ -677,14 +684,26 @@ export const App: React.FC = () => {
       {/* Independent Scrollable Content Viewport */}
       <div className="relative z-10 flex-1 min-h-0 overflow-y-auto px-3 md:px-4 pt-1.5 pb-4">
         <div className="max-w-7xl mx-auto flex flex-col gap-3.5">
+          {vaultWarning && (
+            <div className="glass-surface rounded-2xl px-4 py-3 border-[var(--warning)] flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2.5">
+                <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: 'var(--warning)' }} />
+                <div>
+                  <div className="font-semibold text-[var(--warning)]">凭据加密存储提示（已禁止静默明文落盘）</div>
+                  <div className="text-[var(--muted-foreground)] mt-0.5">{vaultWarning}</div>
+                </div>
+              </div>
+            </div>
+          )}
+
           {killSwitchTripped && (
             <div className="glass-surface rounded-2xl px-4 py-3 border-[var(--error)] flex flex-wrap items-center justify-between gap-3 text-xs">
               <div className="flex items-center gap-2.5">
                 <span className="w-2.5 h-2.5 rounded-full" style={{ background: 'var(--error)', boxShadow: '0 0 10px var(--error)' }} />
                 <div>
-                  <div className="font-semibold text-[var(--error)]">Kill Switch 已触发：内核意外退出，系统代理已锁定防止明文回退</div>
+                  <div className="font-semibold text-[var(--error)]">系统代理断线锁已触发：内核意外退出，已保留失效代理地址</div>
                   <div className="text-[var(--muted-foreground)] mt-0.5">
-                    请重新连接节点，或点击右侧按钮手动解除网络锁以恢复本地直连上网。
+                    仅覆盖遵循 Windows 系统代理（WinINet）的应用；直连进程不受此锁限制。可重连节点或手动恢复原代理设置。
                   </div>
                 </div>
               </div>
@@ -844,6 +863,7 @@ export const App: React.FC = () => {
               wifiSsid={wifiSsid}
               autoStart={autoStart}
               encryptedVault={encryptedVault}
+              vaultWarning={vaultWarning}
               onToggleAutoStart={() => void handleToggleAutoStart()}
               onToggleAutoPilot={(id) => {
                 soundEngine.playTick(920);

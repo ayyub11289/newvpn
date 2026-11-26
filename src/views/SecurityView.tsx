@@ -8,6 +8,7 @@ interface SecurityViewProps {
   wifiSsid: string | null;
   autoStart: boolean;
   encryptedVault: boolean;
+  vaultWarning?: string;
   onToggleAutoStart: () => void;
   onToggleAutoPilot: (id: AutoPilotRule['id']) => void;
   onToggleSecurity: (id: SecurityToggle['id']) => void;
@@ -22,6 +23,7 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
   wifiSsid,
   autoStart,
   encryptedVault,
+  vaultWarning,
   onToggleAutoStart,
   onToggleAutoPilot,
   onToggleSecurity,
@@ -72,8 +74,8 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
         <div className="relative z-10 flex items-start justify-between gap-2">
           <div>
             <h2 className="text-[15px] font-semibold tracking-tight">零信任护盾 · Security Shield</h2>
-            <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
-              凭据存储：{encryptedVault ? 'Windows DPAPI 系统级加密 ✓' : '本地保护存储'}
+            <p className="text-xs mt-0.5" style={{ color: encryptedVault ? 'var(--muted-foreground)' : 'var(--warning)' }}>
+              凭据存储：{encryptedVault ? 'Windows DPAPI 系统级加密 ✓（运行时配置经 stdin 传入不落盘）' : vaultWarning || 'DPAPI 不可用，仅内存保留、不写入明文'}
             </p>
           </div>
         </div>

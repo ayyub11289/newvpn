@@ -162,9 +162,19 @@ export const DiagnosticsView: React.FC<DiagnosticsViewProps> = ({
                 : 'var(--muted-foreground)';
             return (
               <div key={item.id} className="p-3 rounded-xl glass-well flex items-center justify-between gap-3">
-                <div>
-                  <div className="text-xs font-semibold">{item.title}</div>
-                  <p className="text-xs text-[var(--muted-foreground)] mt-0.5">{item.detail}</p>
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold flex flex-wrap items-center gap-1.5">
+                    <span>{item.title}</span>
+                    <span
+                      className="px-1.5 py-0.5 rounded text-[10.5px] font-mono font-medium glass-surface"
+                      style={{
+                        color: item.checkType === 'live-probe' ? 'var(--primary)' : 'var(--muted-foreground)'
+                      }}
+                    >
+                      {item.checkType === 'live-probe' ? '实测探针' : '仅配置检查'}
+                    </span>
+                  </div>
+                  <p className="text-xs text-[var(--muted-foreground)] mt-0.5 leading-relaxed">{item.detail}</p>
                 </div>
                 <span className="px-2.5 py-1 rounded-lg glass-surface font-mono text-xs font-semibold shrink-0" style={{ color }}>
                   {item.badge}

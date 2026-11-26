@@ -74,9 +74,13 @@ export class AppUpdaterController {
     });
 
     autoUpdater.on('error', (err) => {
+      const msg = err.message || '未知错误';
+      const isSigErr = /signature|publisher|certificate|authenticode|not signed/i.test(msg);
       this.emit({
         status: 'error',
-        message: `自动更新通道暂不可用 (${err.message.slice(0, 70)})`
+        message: isSigErr
+          ? `更新包代码签名或发布者身份校验未通过，已阻止安装 (${msg.slice(0, 90)})`
+          : `自动更新通道暂不可用 (${msg.slice(0, 70)})`
       });
     });
   }
@@ -153,13 +157,19 @@ export class AppUpdaterController {
 
   async downloadOrOpenRelease(): Promise<void> {
     if (app.isPackaged && !process.env.PORTABLE_EXECUTABLE_DIR) {
+      // Packaged NSIS installs MUST go through electron-updater signature verification;
+      // do not silently bypass signature errors by opening an unverified download page.
       try {
-        this.emit({ status: 'downloading', progress: 1, message: '正在拉取新版本安装包...' });
+        this.emit({ status: 'downloading', progress: 1, message: '正在拉取并校验签名更新包...' });
         await autoUpdater.downloadUpdate();
-        return;
-      } catch {
-        // fallback to browser release download
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.emit({
+          status: 'error',
+          message: `更新下载或签名校验失败: ${msg.slice(0, 100)}`
+        });
       }
+      return;
     }
     await shell.openExternal(this.state.releaseUrl);
   }

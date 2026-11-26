@@ -1,39 +1,44 @@
 # VEIL VPN — Windows 11 Desktop Client
 
-A Windows 11 desktop VPN & proxy client featuring an optical frosted-glass interface, interactive 3D orthographic dot-matrix globe with camera fly-to, tactile hardware acoustics, system tray floating widget, and a `sing-box` + `Wintun` core architecture.
+A Windows 11 desktop VPN & proxy client featuring an optical frosted-glass interface, interactive 3D orthographic dot-matrix globe with camera fly-to, tactile hardware acoustics, system tray floating widget, and a pinned `sing-box 1.14.4` + `Wintun 0.14.1` core architecture.
 
-## Highlights
+## Security & Architecture Scope
 
-- **Optical Frosted Glass UI & Win11 Native Chrome**: Pinned frameless Windows 11 Mica/Acrylic titlebar, cursor-tracking specular sheen, 60-tick machined power core, and Dark/Light theme switching.
-- **Interactive 3D Globe & 2D Map**: Drag-to-rotate 3D orthographic dot-matrix globe with lofted great-circle encrypted arcs, comet packets, and automatic geo-coordinate mapping for imported nodes.
-- **Persistent Subscriptions & WireGuard Importer**: Saves subscription URLs locally with one-click refresh; supports Clash YAML, Base64/URI (`vless://`, `trojan://`, `ss://`, `vmess://`, `hysteria2://`), and standard WireGuard `.conf` files.
-- **Dual Network Takeover Modes**:
-  - **System Proxy Mode (No Admin Required)**: Manages Windows `Internet Settings` registry + WinINet live refresh, exposes `127.0.0.1:7890` (HTTP) and `127.0.0.1:7891` (SOCKS5), and automatically restores original proxy settings on exit or crash recovery.
-  - **TUN Virtual NIC Mode (`Wintun`)**: Compiles Layer-3 virtual adapter config with per-process split tunneling (`process_name`), Multi-Hop (`detour`), NetShield DNS blocking, and strict-route Kill Switch.
-- **Cloud Auto-Build, Auto-Update & Launch at Startup**:
-  - GitHub Actions workflow (`.github/workflows/release-win.yml`) automatically bundles `sing-box.exe` + `wintun.dll` into ready-to-run Windows `.exe` Installers & Portable builds on GitHub Releases.
-  - Built-in `electron-updater` checks GitHub Releases automatically and supports one-click in-app updates while preserving all user subscriptions and rules in `%APPDATA%`.
-  - Native Windows 11 silent launch-at-startup (`--hidden` to system tray).
+- **Verified "Protected" State**:
+  - Real nodes require a present `sing-box.exe` binary and valid outbound spec; missing cores always report an explicit error instead of silently falling back to demo mode.
+  - VEIL only reports **Protected / 已保护** after the local proxy port is listening **and** an end-to-end remote reachability probe through the active proxy succeeds.
+- **Credentials & Zero-Disk Runtime Config**:
+  - Saved subscriptions and node credentials are encrypted at rest via Windows DPAPI (`safeStorage`, `VEIL1` format) with restricted file permissions. If OS encryption is unavailable, VEIL keeps credentials in memory only and warns the user rather than silently writing plaintext to disk.
+  - Runtime `sing-box` configuration is validated (`check -c stdin`) and launched (`run -c stdin`) strictly over standard input — no plaintext runtime config file is written to disk.
+  - Logs and error messages redact subscription URL tokens, UUIDs, passwords, and WireGuard private keys.
+- **Honest Network Takeover & Kill Switch Boundaries**:
+  - **System Proxy Mode (No Admin Required)**: Manages Windows HKCU `Internet Settings` with immediate rollback on partial write failure and WinINet live refresh. **Scope**: covers only applications that respect Windows system proxy settings; raw-socket, UDP, or proxy-bypassing applications are not covered. When Kill Switch is enabled and `sing-box` crashes, the dead local proxy address is retained to block proxy-aware apps until manually restored.
+  - **TUN Virtual NIC Mode (`Wintun`, Admin Required)**: Uses `sing-box` `auto_route` and `strict_route` while the kernel process is running. **Scope limitation**: `strict_route` does **not** provide an OS-independent firewall kill-switch after `sing-box` crashes or is forcibly terminated; once the process ends, IPv4/IPv6/DNS routes fall back to the default adapter.
+  - **Diagnostics Transparency**: Audit results explicitly distinguish **Live Probes (实测探针)** from **Config-Only Checks (仅配置检查)**.
 
-## Downloading Ready-to-Use Windows 11 Builds (No Node.js Required)
+## Signed Windows Releases & Supply-Chain Hardening
 
-1. Open the **Actions** tab on GitHub → select **Build & Release VEIL VPN (Windows 11)** → click **Run workflow** (or push a version tag like `v1.0.0`).
-2. Once finished, download `VEIL-VPN-*-win-x64-nsis.exe` (Installer) or `VEIL-VPN-*-win-x64-portable.exe` (Portable) from the **Releases** page.
-3. Run the `.exe` on any Windows 10/11 PC and click **`+ 导入节点`** to paste your subscription URL or WireGuard `.conf`.
+- `scripts/fetch-core.mjs` pins exact versions (`sing-box 1.14.4`, `Wintun 0.14.1`) and verifies pre-recorded **SHA-256** checksums on both downloaded archives and extracted binaries, aborting immediately on mismatch.
+- `.github/workflows/release-win.yml` requires Windows Authenticode signing credentials via GitHub Secrets and **refuses to publish unsigned official releases**:
+  - `WIN_CSC_LINK`: Base64-encoded `.pfx`/`.p12` code-signing certificate (or HTTPS URL).
+  - `WIN_CSC_KEY_PASSWORD`: Certificate private key password.
+  - `WIN_PUBLISHER_NAME`: Exact Subject CN of the signing certificate (embedded into `electron-builder` for `electron-updater` `verifyUpdateCodeSignature` publisher identity checks).
 
-## Local Development
+## Local Development & Verification
 
 ```powershell
 # 1. Install dependencies
 npm.cmd install
 
-# 2. (Optional) Fetch official sing-box.exe & wintun.dll into resources/bin/
+# 2. Fetch & SHA-256 verify pinned sing-box.exe & wintun.dll into resources/bin/
 npm.cmd run fetch-core
 
-# 3. Build & start desktop client
+# 3. Typecheck, build, verify sing-box 1.14 config schemas & run security regression tests
+npm.cmd run typecheck
 npm.cmd run build
-npm.cmd start
+npm.cmd run verify-core-config
+npm.cmd test
 
-# 4. Build local Windows .exe installer & portable package into release/
-npm.cmd run dist:win
+# 4. Start desktop client
+npm.cmd start
 ```

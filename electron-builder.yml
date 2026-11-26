@@ -28,6 +28,11 @@ win:
       arch:
         - x64
   requestedExecutionLevel: asInvoker
+  signAndEditExecutable: true
+  verifyUpdateCodeSignature: true
+  publisherName:
+    - VEIL Network
+  rfc3161TimeStampServer: http://timestamp.digicert.com
 nsis:
   artifactName: VEIL-VPN-${version}-win-${arch}-Setup.${ext}
   oneClick: true

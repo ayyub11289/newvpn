@@ -7,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       release_tag:
-        description: "Release version tag (e.g. v1.1.0). Leave empty to use package.json version."
+        description: "Release version tag (e.g. v1.2.3). Leave empty to use package.json version."
         required: false
         default: ""
 
@@ -20,6 +20,24 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Verify Windows Code Signing Secrets (Block Unsigned Official Releases)
+        shell: pwsh
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          WIN_PUBLISHER_NAME: ${{ secrets.WIN_PUBLISHER_NAME }}
+        run: |
+          $missing = @()
+          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_LINK)) { $missing += "WIN_CSC_LINK (base64 PFX/P12 certificate or URL)" }
+          if ([string]::IsNullOrWhiteSpace($env:WIN_CSC_KEY_PASSWORD)) { $missing += "WIN_CSC_KEY_PASSWORD (certificate password)" }
+          if ([string]::IsNullOrWhiteSpace($env:WIN_PUBLISHER_NAME)) { $missing += "WIN_PUBLISHER_NAME (exact certificate Subject CN for electron-updater verification)" }
+
+          if ($missing.Count -gt 0) {
+            Write-Host "::error::Release BLOCKED: Missing required Windows code-signing GitHub Secrets: $($missing -join '; '). Official Windows releases MUST be Authenticode-signed and publisher-verified; refusing to publish unsigned binaries."
+            exit 1
+          }
+          Write-Host "Windows code-signing credentials present. Publisher identity verification enabled."
 
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
@@ -49,7 +67,7 @@ jobs:
           echo "version=$version" >> $env:GITHUB_OUTPUT
           Write-Host "Release tag: $tag (version $version)"
 
-      - name: Fetch official sing-box & wintun core binaries
+      - name: Fetch & SHA-256 verify pinned sing-box & wintun binaries
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: npm run fetch-core
@@ -57,16 +75,49 @@ jobs:
       - name: Generate Windows application icon
         run: npm run gen-icon
 
-      - name: Typecheck, build & verify sing-box 1.14 config compatibility
+      - name: Typecheck, build, verify sing-box 1.14 config & run security regression tests
         run: |
           npm run typecheck
           npm run build
           npm run verify-core-config
+          npm test
 
-      - name: Package Windows Installer & Portable (.exe)
-        run: npx electron-builder --win --publish never
+      - name: Package & Authenticode-Sign Windows Installer & Portable (.exe)
+        shell: pwsh
+        env:
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+          WIN_PUBLISHER_NAME: ${{ secrets.WIN_PUBLISHER_NAME }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "true"
+        run: |
+          npx electron-builder --win --publish never `
+            "-c.win.verifyUpdateCodeSignature=true" `
+            "-c.win.publisherName=$env:WIN_PUBLISHER_NAME"
 
-      - name: Publish GitHub Release with Installer, Portable & latest.yml
+      - name: Verify Authenticode Signatures on All Release Executables
+        shell: pwsh
+        env:
+          WIN_PUBLISHER_NAME: ${{ secrets.WIN_PUBLISHER_NAME }}
+        run: |
+          $exes = Get-ChildItem release\*.exe
+          if ($exes.Count -eq 0) {
+            Write-Host "::error::No release .exe artifacts found in release\."
+            exit 1
+          }
+          foreach ($exe in $exes) {
+            $sig = Get-AuthenticodeSignature -FilePath $exe.FullName
+            Write-Host "Checked $($exe.Name): Status=$($sig.Status), Subject=$($sig.SignerCertificate.Subject)"
+            if ($sig.Status -ne 'Valid') {
+              Write-Host "::error::Release BLOCKED: $($exe.Name) does not have a valid Authenticode signature (Status=$($sig.Status))."
+              exit 1
+            }
+            if ($sig.SignerCertificate.Subject -notlike "*CN=$env:WIN_PUBLISHER_NAME*") {
+              Write-Host "::error::Release BLOCKED: $($exe.Name) certificate subject '$($sig.SignerCertificate.Subject)' does not match WIN_PUBLISHER_NAME '$env:WIN_PUBLISHER_NAME'."
+              exit 1
+            }
+          }
+
+      - name: Publish Signed GitHub Release with Installer, Portable & latest.yml
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

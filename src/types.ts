@@ -63,6 +63,7 @@ export interface ConnectRequest {
   security: SecurityToggle[];
   autopilot: AutoPilotRule[];
   splitApps: SplitAppRule[];
+  explicitDemo?: boolean;
 }
 
 export interface VaultState {
@@ -74,6 +75,7 @@ export interface VaultState {
   protocol: ProtocolMode;
   takeoverMode: TakeoverMode;
   encryptedAtRest: boolean;
+  storageWarning?: string;
 }
 
 export interface CoreCapabilities {
@@ -110,6 +112,7 @@ export interface LeakAuditItem {
   status: 'pass' | 'warn' | 'idle';
   badge: string;
   verified: boolean;
+  checkType: 'live-probe' | 'config-only';
 }
 
 export interface ImportResult {

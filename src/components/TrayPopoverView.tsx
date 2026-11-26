@@ -121,7 +121,7 @@ export const TrayPopoverView: React.FC = () => {
 
         {snap.killSwitchTripped && (
           <div className="p-2.5 rounded-xl border border-[var(--error)] bg-[var(--secondary)] text-xs flex items-center justify-between gap-2">
-            <span className="text-[var(--error)] font-medium">内核异常退出，网络锁已阻断回退</span>
+            <span className="text-[var(--error)] font-medium">内核异常退出，系统代理锁已阻断代理应用</span>
             <button
               type="button"
               onClick={() => void window.veilAPI?.clearKillSwitch()}
@@ -164,9 +164,11 @@ export const TrayPopoverView: React.FC = () => {
               {!activeNode
                 ? '尚未导入节点'
                 : snap.status === 'connected'
-                ? '加密隧道已保护'
+                ? snap.engineMode === 'demo'
+                  ? '演示沙盒 (未加密)'
+                  : '加密隧道已保护'
                 : snap.status === 'connecting'
-                ? '正在建立隧道...'
+                ? '正在建立并验证隧道...'
                 : '当前未连接'}
             </div>
             <div className="text-xs text-[var(--muted-foreground)] truncate mt-0.5">
