@@ -1,0 +1,10 @@
+node_modules/
+dist/
+dist-electron/
+release/
+resources/bin/*.exe
+resources/bin/*.dll
+.npmrc
+*.log
+.DS_Store
+Thumbs.db
