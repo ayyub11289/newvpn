@@ -4,20 +4,25 @@ import {
   CoreCapabilities,
   ImportResult,
   LeakAuditItem,
+  TakeoverMode,
   TelemetrySnapshot,
-  UpdateState
+  UpdateState,
+  VaultState
 } from './types';
 
 const veilAPI = {
   getCapabilities: (): Promise<CoreCapabilities> => ipcRenderer.invoke('core:capabilities'),
+  getVault: (): Promise<VaultState> => ipcRenderer.invoke('vault:get'),
+  updateVault: (patch: Partial<VaultState>): Promise<VaultState> => ipcRenderer.invoke('vault:update', patch),
   connect: (req: ConnectRequest): Promise<void> => ipcRenderer.invoke('tunnel:connect', req),
   disconnect: (): Promise<void> => ipcRenderer.invoke('tunnel:disconnect'),
+  clearKillSwitch: (): Promise<void> => ipcRenderer.invoke('tunnel:clear-killswitch'),
   triggerBurst: (): Promise<void> => ipcRenderer.invoke('tunnel:burst'),
   importFromUrl: (url: string): Promise<ImportResult> => ipcRenderer.invoke('sub:import-url', url),
   importFromText: (text: string, label?: string): Promise<ImportResult> =>
     ipcRenderer.invoke('sub:import-text', text, label),
-  runLeakAudit: (netShield: boolean, pq: boolean): Promise<LeakAuditItem[]> =>
-    ipcRenderer.invoke('diag:leak-audit', netShield, pq),
+  runLeakAudit: (takeoverMode: TakeoverMode, netShield: boolean, killSwitch: boolean): Promise<LeakAuditItem[]> =>
+    ipcRenderer.invoke('diag:leak-audit', takeoverMode, netShield, killSwitch),
   pingNode: (host: string, port: number): Promise<number> =>
     ipcRenderer.invoke('diag:ping-node', host, port),
   openBinFolder: (): Promise<void> => ipcRenderer.invoke('core:open-bin-dir'),
@@ -35,6 +40,11 @@ const veilAPI = {
     const handler = (_e: Electron.IpcRendererEvent, snap: TelemetrySnapshot) => cb(snap);
     ipcRenderer.on('tunnel:telemetry', handler);
     return () => ipcRenderer.removeListener('tunnel:telemetry', handler);
+  },
+  onVaultChanged: (cb: (vault: VaultState) => void): (() => void) => {
+    const handler = (_e: Electron.IpcRendererEvent, vault: VaultState) => cb(vault);
+    ipcRenderer.on('vault:changed', handler);
+    return () => ipcRenderer.removeListener('vault:changed', handler);
   },
   onUpdateState: (cb: (state: UpdateState) => void): (() => void) => {
     const handler = (_e: Electron.IpcRendererEvent, st: UpdateState) => cb(st);

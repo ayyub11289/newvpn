@@ -87,9 +87,9 @@ export const DEFAULT_AUTOPILOT: AutoPilotRule[] = [
 ];
 
 export const DEFAULT_SECURITY: SecurityToggle[] = [
-  { id: 'killswitch', title: '全局网络锁 (Kill Switch)', desc: 'TUN 严格路由与异常断开保护，杜绝真实 IP 明文泄露', enabled: true },
-  { id: 'netshield', title: 'NetShield 反追踪净化', desc: '在加密 DNS 层拦截恶意域名、广告遥测与隐私嗅探脚本', enabled: true },
-  { id: 'pqkem', title: '后量子混合密钥 (ML-KEM)', desc: '启用高强度前向保密与周期密钥轮换策略', enabled: true },
+  { id: 'killswitch', title: '崩溃断网保护 (Kill Switch)', desc: 'TUN 模式下启用内核 strict_route；系统代理模式下若内核异常崩溃将锁定失效代理防静默回退明文', enabled: true },
+  { id: 'netshield', title: 'NetShield 反追踪净化', desc: '通过 sing-box reject 动作拦截广告、遥测与追踪域名', enabled: true },
+  { id: 'pqkem', title: '密钥轮换显示 (会话标识)', desc: '在连接中枢周期刷新会话指纹标识（实际加密套件由所选节点协议决定）', enabled: true },
   { id: 'lan', title: '局域网设备直连 (LAN)', desc: '保持全局保护的同时允许访问本地 NAS、打印机与调试端口', enabled: true }
 ];
 

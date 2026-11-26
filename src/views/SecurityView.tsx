@@ -7,6 +7,7 @@ interface SecurityViewProps {
   splitApps: SplitAppRule[];
   wifiSsid: string | null;
   autoStart: boolean;
+  encryptedVault: boolean;
   onToggleAutoStart: () => void;
   onToggleAutoPilot: (id: AutoPilotRule['id']) => void;
   onToggleSecurity: (id: SecurityToggle['id']) => void;
@@ -20,6 +21,7 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
   splitApps,
   wifiSsid,
   autoStart,
+  encryptedVault,
   onToggleAutoStart,
   onToggleAutoPilot,
   onToggleSecurity,
@@ -67,11 +69,13 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
 
       {/* Zero-Trust Security Shield */}
       <section className="lg:col-span-4 glass-surface spotlight-card rounded-2xl p-5 flex flex-col gap-4">
-        <div className="relative z-10">
-          <h2 className="text-sm font-semibold">零信任护盾 · Security Shield</h2>
-          <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
-            修改将实时编译进 sing-box 路由与加密配置
-          </p>
+        <div className="relative z-10 flex items-start justify-between gap-2">
+          <div>
+            <h2 className="text-sm font-semibold">零信任护盾 · Security Shield</h2>
+            <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+              凭据存储：{encryptedVault ? 'Windows DPAPI 系统级加密 ✓' : '本地保护存储'}
+            </p>
+          </div>
         </div>
         <div className="relative z-10 flex flex-col divide-y divide-[var(--card-border)]">
           <div className="py-3 pt-1 flex items-center justify-between gap-3">

@@ -1,8 +1,8 @@
 {
   "name": "veil-vpn-win11",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "VEIL Network",
-  "description": "VEIL VPN — Windows 11 Optical Glass Desktop VPN Client powered by sing-box & Wintun",
+  "description": "VEIL VPN — Windows 11 Optical Glass Desktop VPN Client powered by sing-box 1.14 & Wintun",
   "main": "dist-electron/main.js",
   "private": true,
   "scripts": {
@@ -14,10 +14,11 @@
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "start": "electron .",
     "fetch-core": "node scripts/fetch-core.mjs",
+    "verify-core-config": "node scripts/verify-singbox-config.mjs",
     "dist:win": "npm run gen-icon && npm run build && electron-builder --win"
   },
   "dependencies": {
-    "electron-updater": "^6.3.9",
+    "electron-updater": "^6.8.11",
     "js-yaml": "^4.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
@@ -29,8 +30,8 @@
     "@types/react": "^19.0.10",
     "@types/react-dom": "^19.0.4",
     "@vitejs/plugin-react": "^4.3.4",
-    "electron": "^34.2.0",
-    "electron-builder": "^25.1.8",
+    "electron": "^45.5.0",
+    "electron-builder": "^26.18.0",
     "tailwindcss": "^4.0.9",
     "typescript": "^5.7.3",
     "vite": "^6.1.1"

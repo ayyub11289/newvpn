@@ -1,11 +1,74 @@
-import { ConnectRequest } from '../types';
+import { ConnectRequest, VpnNode } from '../types';
 
 export const MIXED_PROXY_PORT = 7890;
 export const SOCKS_PROXY_PORT = 7891;
 export const CLASH_API_PORT = 19090;
 
 /**
- * Compiles UI tunnel state into a production sing-box v1.11+ JSON configuration.
+ * Normalizes legacy WireGuard outbound specs (e.g. from older saved vaults)
+ * into sing-box 1.11–1.14 native `endpoints` format.
+ */
+function normalizeWireGuardEndpoint(spec: Record<string, unknown>, tag: string): Record<string, unknown> {
+  if (Array.isArray(spec.peers)) {
+    return { ...spec, type: 'wireguard', tag };
+  }
+  // Migrate legacy fields: server/server_port/local_address/peer_public_key
+  const localAddr = Array.isArray(spec.local_address)
+    ? spec.local_address
+    : [String(spec.local_address || '10.66.66.2/32')];
+
+  const peer: Record<string, unknown> = {
+    address: String(spec.server || ''),
+    port: Number(spec.server_port || 51820),
+    public_key: String(spec.peer_public_key || ''),
+    allowed_ips: ['0.0.0.0/0', '::/0']
+  };
+  if (spec.pre_shared_key) {
+    peer.pre_shared_key = String(spec.pre_shared_key);
+  }
+
+  return {
+    type: 'wireguard',
+    tag,
+    address: localAddr,
+    private_key: String(spec.private_key || ''),
+    mtu: Number(spec.mtu || 1420),
+    peers: [peer]
+  };
+}
+
+function addNodeToConfig(
+  node: VpnNode,
+  tag: string,
+  detourTag: string | undefined,
+  endpoints: Array<Record<string, unknown>>,
+  outbounds: Array<Record<string, unknown>>
+): void {
+  const raw = node.outbound
+    ? { ...node.outbound }
+    : {
+        type: 'socks',
+        server: node.host,
+        server_port: node.port || 443
+      };
+
+  if (raw.type === 'wireguard') {
+    const ep = normalizeWireGuardEndpoint(raw, tag);
+    if (detourTag) ep.detour = detourTag;
+    endpoints.push(ep);
+  } else {
+    const ob: Record<string, unknown> = { ...raw, tag };
+    if (detourTag) ob.detour = detourTag;
+    outbounds.push(ob);
+  }
+}
+
+/**
+ * Compiles UI tunnel state into a strictly valid sing-box 1.14+ JSON configuration:
+ * - No removed `block` / `dns` outbounds (uses Route Rule Actions: sniff, hijack-dns, reject)
+ * - New typed DNS server schema (`type: "https"`, `server`, `server_port`, `path`)
+ * - TUN `address: [...]` array instead of removed `inet4_address`
+ * - WireGuard placed in top-level `endpoints` instead of removed `wireguard` outbound
  */
 export function buildSingBoxConfig(req: ConnectRequest): Record<string, unknown> {
   const killSwitch = req.security.find((s) => s.id === 'killswitch')?.enabled ?? true;
@@ -19,16 +82,13 @@ export function buildSingBoxConfig(req: ConnectRequest): Record<string, unknown>
       type: 'mixed',
       tag: 'mixed-in',
       listen: '127.0.0.1',
-      listen_port: MIXED_PROXY_PORT,
-      sniff: true,
-      sniff_override_destination: true
+      listen_port: MIXED_PROXY_PORT
     },
     {
       type: 'socks',
       tag: 'socks-in',
       listen: '127.0.0.1',
-      listen_port: SOCKS_PROXY_PORT,
-      sniff: true
+      listen_port: SOCKS_PROXY_PORT
     }
   ];
 
@@ -37,46 +97,37 @@ export function buildSingBoxConfig(req: ConnectRequest): Record<string, unknown>
       type: 'tun',
       tag: 'tun-in',
       interface_name: 'VEIL-Tunnel',
-      inet4_address: '172.19.0.1/30',
+      address: ['172.19.0.1/30'],
       mtu: req.protocol === 'stealth' ? 1380 : 1420,
       auto_route: true,
       strict_route: killSwitch,
-      stack: 'system',
-      sniff: true
+      stack: 'system'
     });
   }
 
+  const endpoints: Array<Record<string, unknown>> = [];
   const outbounds: Array<Record<string, unknown>> = [];
 
-  const mainOutbound: Record<string, unknown> = req.node.outbound
-    ? { ...req.node.outbound, tag: 'proxy' }
-    : {
-        type: 'socks',
-        tag: 'proxy',
-        server: req.node.host,
-        server_port: req.node.port || 443
-      };
+  const useMultiHop =
+    req.multiHop &&
+    Boolean(req.entryNode) &&
+    req.entryNode!.id !== req.node.id &&
+    Boolean(req.entryNode!.outbound);
 
-  // Multi-Hop chaining via sing-box `detour`
-  if (req.multiHop && req.entryNode && req.entryNode.id !== req.node.id && req.entryNode.outbound) {
-    const entryOutbound: Record<string, unknown> = {
-      ...req.entryNode.outbound,
-      tag: 'entry-hop'
-    };
-    mainOutbound.detour = 'entry-hop';
-    outbounds.push(mainOutbound, entryOutbound);
+  if (useMultiHop && req.entryNode) {
+    addNodeToConfig(req.node, 'proxy', 'entry-hop', endpoints, outbounds);
+    addNodeToConfig(req.entryNode, 'entry-hop', undefined, endpoints, outbounds);
   } else {
-    outbounds.push(mainOutbound);
+    addNodeToConfig(req.node, 'proxy', undefined, endpoints, outbounds);
   }
 
-  outbounds.push(
-    { type: 'direct', tag: 'direct' },
-    { type: 'block', tag: 'block' },
-    { type: 'dns', tag: 'dns-out' }
-  );
+  outbounds.push({ type: 'direct', tag: 'direct' });
 
-  // Build Route Rules
-  const routeRules: Array<Record<string, unknown>> = [{ protocol: 'dns', outbound: 'dns-out' }];
+  // sing-box 1.11–1.14 Route Rule Actions
+  const routeRules: Array<Record<string, unknown>> = [
+    { action: 'sniff' },
+    { protocol: 'dns', action: 'hijack-dns' }
+  ];
 
   if (lanBypass) {
     routeRules.push({ ip_is_private: true, outbound: 'direct' });
@@ -84,8 +135,14 @@ export function buildSingBoxConfig(req: ConnectRequest): Record<string, unknown>
 
   if (netShield) {
     routeRules.push({
-      domain_suffix: ['doubleclick.net', 'googlesyndication.com', 'adservice.google.com', 'analytics.tiktok.com', 'telemetry.microsoft.com'],
-      outbound: 'block'
+      domain_suffix: [
+        'doubleclick.net',
+        'googlesyndication.com',
+        'adservice.google.com',
+        'analytics.tiktok.com',
+        'telemetry.microsoft.com'
+      ],
+      action: 'reject'
     });
   }
 
@@ -103,7 +160,6 @@ export function buildSingBoxConfig(req: ConnectRequest): Record<string, unknown>
     });
   }
 
-  // Per-App Process Split Tunneling (effective in TUN mode)
   const bypassProcs = req.splitApps.filter((a) => a.mode === 'bypass').flatMap((a) => a.executables);
   const proxyProcs = req.splitApps.filter((a) => a.mode === 'proxy').flatMap((a) => a.executables);
 
@@ -114,14 +170,29 @@ export function buildSingBoxConfig(req: ConnectRequest): Record<string, unknown>
     routeRules.push({ process_name: proxyProcs, outbound: 'proxy' });
   }
 
-  return {
+  const config: Record<string, unknown> = {
     log: { level: 'warn', timestamp: true },
     dns: {
       servers: [
-        { tag: 'dns-remote', address: 'https://1.1.1.1/dns-query', detour: 'proxy' },
-        { tag: 'dns-direct', address: 'https://223.5.5.5/dns-query', detour: 'direct' }
+        {
+          type: 'https',
+          tag: 'dns-remote',
+          server: '1.1.1.1',
+          server_port: 443,
+          path: '/dns-query',
+          detour: 'proxy'
+        },
+        {
+          type: 'https',
+          tag: 'dns-direct',
+          server: '223.5.5.5',
+          server_port: 443,
+          path: '/dns-query'
+        }
       ],
-      rules: cnDirect ? [{ domain_suffix: ['cn', 'qq.com', 'alipay.com'], server: 'dns-direct' }] : [],
+      rules: cnDirect
+        ? [{ domain_suffix: ['cn', 'qq.com', 'alipay.com'], server: 'dns-direct' }]
+        : [],
       final: 'dns-remote',
       strategy: 'prefer_ipv4'
     },
@@ -130,7 +201,8 @@ export function buildSingBoxConfig(req: ConnectRequest): Record<string, unknown>
     route: {
       rules: routeRules,
       final: 'proxy',
-      auto_detect_interface: true
+      auto_detect_interface: true,
+      default_domain_resolver: 'dns-direct'
     },
     experimental: {
       clash_api: {
@@ -139,4 +211,10 @@ export function buildSingBoxConfig(req: ConnectRequest): Record<string, unknown>
       }
     }
   };
+
+  if (endpoints.length > 0) {
+    config.endpoints = endpoints;
+  }
+
+  return config;
 }

@@ -24,6 +24,38 @@ function tryDecodeBase64(input: string): string {
   return trimmed;
 }
 
+/**
+ * Builds a sing-box 1.11–1.14 compliant WireGuard endpoint specification.
+ */
+function buildWireGuardEndpointSpec(opts: {
+  host: string;
+  port: number;
+  addresses: string[];
+  privateKey: string;
+  publicKey: string;
+  preSharedKey?: string;
+  mtu?: number;
+}): Record<string, unknown> {
+  const peer: Record<string, unknown> = {
+    address: opts.host,
+    port: opts.port,
+    public_key: opts.publicKey,
+    allowed_ips: ['0.0.0.0/0', '::/0']
+  };
+  if (opts.preSharedKey) {
+    peer.pre_shared_key = opts.preSharedKey;
+  }
+
+  return {
+    type: 'wireguard',
+    tag: 'proxy',
+    address: opts.addresses,
+    private_key: opts.privateKey,
+    mtu: opts.mtu || 1420,
+    peers: [peer]
+  };
+}
+
 export function parseWireGuardConf(raw: string, customName?: string): VpnNode[] {
   const lines = raw.split(/\r?\n/);
   let section = '';
@@ -60,20 +92,15 @@ export function parseWireGuardConf(raw: string, customName?: string): VpnNode[] 
     .map((s) => s.trim())
     .filter(Boolean);
 
-  const outbound: Record<string, unknown> = {
-    type: 'wireguard',
-    tag: 'proxy',
-    server: host,
-    server_port: port,
-    local_address: localAddresses,
-    private_key: iface.privatekey,
-    peer_public_key: peer.publickey,
+  const outbound = buildWireGuardEndpointSpec({
+    host,
+    port,
+    addresses: localAddresses,
+    privateKey: iface.privatekey,
+    publicKey: peer.publickey,
+    preSharedKey: peer.presharedkey,
     mtu: Number(iface.mtu) || 1420
-  };
-
-  if (peer.presharedkey) {
-    outbound.pre_shared_key = peer.presharedkey;
-  }
+  });
 
   return [
     {
@@ -83,7 +110,7 @@ export function parseWireGuardConf(raw: string, customName?: string): VpnNode[] 
       city: label,
       host,
       port,
-      asn: 'WireGuard Peer',
+      asn: 'WireGuard Endpoint',
       ip: host,
       lon: geo.lon,
       lat: geo.lat,
@@ -401,15 +428,15 @@ function parseClashYaml(raw: string): VpnNode[] {
       };
     } else if (type === 'wireguard') {
       protocolType = 'wireguard';
-      outbound = {
-        type: 'wireguard',
-        tag: 'proxy',
-        server: host,
-        server_port: port,
-        local_address: [String(p.ip || '10.66.66.2/32')],
-        private_key: String(p['private-key'] || ''),
-        peer_public_key: String(p['public-key'] || '')
-      };
+      outbound = buildWireGuardEndpointSpec({
+        host,
+        port,
+        addresses: [String(p.ip || '10.66.66.2/32')],
+        privateKey: String(p['private-key'] || ''),
+        publicKey: String(p['public-key'] || ''),
+        preSharedKey: p['pre-shared-key'] ? String(p['pre-shared-key']) : undefined,
+        mtu: Number(p.mtu || 1420)
+      });
     }
 
     if (outbound) {
@@ -466,7 +493,7 @@ export async function fetchSubscriptionFromUrl(url: string): Promise<VpnNode[]> 
   const timeout = setTimeout(() => controller.abort(), 12000);
   try {
     const res = await fetch(url.trim(), {
-      headers: { 'User-Agent': 'clash-verge/v2.0.0 VEIL-VPN/1.0' },
+      headers: { 'User-Agent': 'clash-verge/v2.0.0 VEIL-VPN/1.1' },
       signal: controller.signal
     });
     if (!res.ok) {

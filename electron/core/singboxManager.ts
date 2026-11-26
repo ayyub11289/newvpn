@@ -1,16 +1,21 @@
-import { ChildProcess, spawn } from 'node:child_process';
+import { ChildProcess, execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
+import { promisify } from 'node:util';
 import { ConnectRequest, CoreCapabilities, TelemetrySnapshot, TunnelStatus } from '../types';
 import { buildSingBoxConfig, CLASH_API_PORT, MIXED_PROXY_PORT } from './configBuilder';
+import { measureTcpPing } from './leakAuditor';
 import { WinProxyGuard } from './winProxyGuard';
 import { inspectWindowsWifi } from './wifiWatcher';
+
+const execFileAsync = promisify(execFile);
 
 export class SingBoxManager {
   private binDir: string;
   private userDataDir: string;
   private proxyGuard: WinProxyGuard;
   private proc: ChildProcess | null = null;
+  private sessionId = 0;
   private status: TunnelStatus = 'disconnected';
   private handshakeStep = 0;
   private engineMode: 'live' | 'demo' = 'demo';
@@ -23,9 +28,12 @@ export class SingBoxManager {
   private burstTicks = 0;
   private wifiSsid: string | null = null;
   private wifiOpen = false;
+  private killSwitchEnabled = true;
+  private killSwitchTripped = false;
   private lastError: string | undefined;
   private handshakeTimer: NodeJS.Timeout | null = null;
   private telemetryTimer: NodeJS.Timeout | null = null;
+  private prevTrafficBytes = { down: 0, up: 0 };
   private onTelemetry: (snap: TelemetrySnapshot) => void;
 
   constructor(binDir: string, userDataDir: string, onTelemetry: (snap: TelemetrySnapshot) => void) {
@@ -43,6 +51,26 @@ export class SingBoxManager {
     return path.join(this.binDir, 'wintun.dll');
   }
 
+  private getTempConfigPath(): string {
+    return path.join(this.userDataDir, 'sing-box.runtime.json');
+  }
+
+  private cleanupTempConfig(): void {
+    try {
+      const cfgPath = this.getTempConfigPath();
+      if (fs.existsSync(cfgPath)) {
+        fs.unlinkSync(cfgPath);
+      }
+      // Also remove legacy filename from v1.0.0 if present
+      const legacyPath = path.join(this.userDataDir, 'sing-box.config.json');
+      if (fs.existsSync(legacyPath)) {
+        fs.unlinkSync(legacyPath);
+      }
+    } catch {
+      // ignore cleanup errors
+    }
+  }
+
   async getCapabilities(): Promise<CoreCapabilities> {
     const hasSingBox = fs.existsSync(this.getSingBoxPath());
     const hasWintun = fs.existsSync(this.getWintunPath());
@@ -58,6 +86,7 @@ export class SingBoxManager {
   }
 
   async init(): Promise<void> {
+    this.cleanupTempConfig();
     await this.proxyGuard.recoverIfDirty();
     this.startTelemetryLoop();
   }
@@ -81,85 +110,176 @@ export class SingBoxManager {
       activeNodeId: this.activeNodeId,
       wifiSsid: this.wifiSsid,
       wifiOpen: this.wifiOpen,
+      killSwitchTripped: this.killSwitchTripped,
       error: this.lastError
     });
   }
 
+  /**
+   * Validates generated JSON with `sing-box check -c <path>` before spawning.
+   */
+  private async validateConfigWithBinary(cfgPath: string): Promise<{ ok: boolean; error?: string }> {
+    try {
+      await execFileAsync(this.getSingBoxPath(), ['check', '-c', cfgPath], {
+        cwd: this.binDir,
+        windowsHide: true,
+        timeout: 5000
+      });
+      return { ok: true };
+    } catch (err) {
+      const e = err as { stderr?: string; message?: string };
+      return { ok: false, error: (e.stderr || e.message || 'sing-box check failed').trim().slice(0, 220) };
+    }
+  }
+
+  /**
+   * Waits until the spawned process is still alive AND 127.0.0.1:7890 is listening.
+   */
+  private async waitForCoreReady(child: ChildProcess, mySession: number, maxWaitMs = 4500): Promise<boolean> {
+    const start = Date.now();
+    while (Date.now() - start < maxWaitMs) {
+      if (mySession !== this.sessionId) return false;
+      if (child.exitCode !== null || child.killed) return false;
+      const ping = await measureTcpPing('127.0.0.1', MIXED_PROXY_PORT, 350);
+      if (mySession !== this.sessionId) return false;
+      if (child.exitCode !== null || child.killed) return false;
+      if (ping >= 0) return true;
+      await new Promise((r) => setTimeout(r, 150));
+    }
+    return false;
+  }
+
   async connect(req: ConnectRequest): Promise<void> {
+    // Advance session token FIRST so any old process's async exit handler is ignored
+    const mySession = ++this.sessionId;
+    if (this.handshakeTimer) {
+      clearInterval(this.handshakeTimer);
+      this.handshakeTimer = null;
+    }
     await this.stopProcessOnly();
+
+    this.killSwitchEnabled = req.security.find((s) => s.id === 'killswitch')?.enabled ?? true;
+    this.killSwitchTripped = false;
     this.lastError = undefined;
     this.activeNodeId = req.node.id;
     this.activeIp = req.node.ip || req.node.host;
     this.activePing = req.node.ping;
     this.status = 'connecting';
     this.handshakeStep = 0;
+    this.prevTrafficBytes = { down: 0, up: 0 };
 
     const hasBin = fs.existsSync(this.getSingBoxPath());
     const canRunLive = hasBin && req.node.source !== 'demo' && Boolean(req.node.outbound);
     this.engineMode = canRunLive ? 'live' : 'demo';
 
-    // Always write compiled sing-box config to userData so user/diagnostics can inspect it
-    const cfgObj = buildSingBoxConfig(req);
-    const cfgPath = path.join(this.userDataDir, 'sing-box.config.json');
-    fs.mkdirSync(this.userDataDir, { recursive: true });
-    fs.writeFileSync(cfgPath, JSON.stringify(cfgObj, null, 2), 'utf8');
-
     this.emit(0, 0);
 
     if (canRunLive) {
-      try {
-        this.handshakeStep = 1;
-        this.emit(0, 0);
+      const cfgObj = buildSingBoxConfig(req);
+      const cfgPath = this.getTempConfigPath();
+      fs.mkdirSync(this.userDataDir, { recursive: true });
+      fs.writeFileSync(cfgPath, JSON.stringify(cfgObj, null, 2), 'utf8');
 
-        this.proc = spawn(this.getSingBoxPath(), ['run', '-c', cfgPath], {
-          cwd: this.binDir,
-          windowsHide: true,
-          stdio: ['ignore', 'pipe', 'pipe']
-        });
+      // Step 1: Pre-flight schema check via real sing-box binary
+      this.handshakeStep = 1;
+      this.emit(0, 0);
+      const checkRes = await this.validateConfigWithBinary(cfgPath);
+      if (mySession !== this.sessionId) return;
 
-        this.proc.stderr?.on('data', (chunk: Buffer) => {
-          const msg = chunk.toString('utf8').trim();
-          if (msg.toLowerCase().includes('fatal')) {
-            this.lastError = msg.slice(0, 180);
-          }
-        });
-
-        this.proc.on('exit', (code) => {
-          if (this.status !== 'disconnected') {
-            this.status = 'disconnected';
-            this.lastError = code ? `sing-box exited (code ${code})` : undefined;
-            void this.proxyGuard.disableSystemProxy();
-            this.emit(0, 0);
-          }
-        });
-
-        this.handshakeStep = 2;
-        this.emit(0, 0);
-
-        if (req.takeoverMode === 'system-proxy') {
-          await this.proxyGuard.enableSystemProxy(MIXED_PROXY_PORT);
-        }
-
-        await new Promise((r) => setTimeout(r, 420));
-        this.status = 'connected';
-        this.uptimeSeconds = 0;
-        this.emit(0, 0);
-        return;
-      } catch (err) {
-        this.lastError = err instanceof Error ? err.message : String(err);
+      if (!checkRes.ok) {
+        this.cleanupTempConfig();
         this.status = 'disconnected';
+        this.lastError = `内核配置校验失败: ${checkRes.error}`;
         await this.proxyGuard.disableSystemProxy();
         this.emit(0, 0);
         return;
       }
+
+      // Step 2: Spawn sing-box and verify liveness + listening port
+      let stderrTail = '';
+      const child = spawn(this.getSingBoxPath(), ['run', '-c', cfgPath], {
+        cwd: this.binDir,
+        windowsHide: true,
+        stdio: ['ignore', 'pipe', 'pipe']
+      });
+      this.proc = child;
+
+      child.stderr?.on('data', (chunk: Buffer) => {
+        const msg = chunk.toString('utf8').trim();
+        if (msg) stderrTail = msg.slice(-220);
+      });
+
+      child.on('exit', (code, signal) => {
+        // Guard against stale exit callbacks from previous sessions when switching nodes
+        if (mySession !== this.sessionId) return;
+        this.proc = null;
+        this.cleanupTempConfig();
+
+        const wasRunning = this.status === 'connected' || this.status === 'connecting';
+        this.status = 'disconnected';
+
+        if (wasRunning) {
+          this.lastError = stderrTail || `sing-box 意外退出 (code=${code ?? 'null'}, signal=${signal ?? 'none'})`;
+          if (this.killSwitchEnabled && req.takeoverMode === 'system-proxy') {
+            // Do NOT restore plaintext proxy when Kill Switch is armed on unexpected core crash:
+            // keep system proxy pointing at dead 127.0.0.1:7890 to block proxy-aware apps from plaintext fallback.
+            this.killSwitchTripped = true;
+          } else {
+            void this.proxyGuard.disableSystemProxy();
+          }
+        }
+        this.emit(0, 0);
+      });
+
+      this.handshakeStep = 2;
+      this.emit(0, 0);
+
+      const isReady = await this.waitForCoreReady(child, mySession, 4500);
+      if (mySession !== this.sessionId) return;
+
+      if (!isReady) {
+        await this.stopProcessOnly();
+        this.cleanupTempConfig();
+        this.status = 'disconnected';
+        this.lastError = stderrTail || 'sing-box 启动超时或提前退出，未监听本地代理端口';
+        await this.proxyGuard.disableSystemProxy();
+        this.emit(0, 0);
+        return;
+      }
+
+      try {
+        if (req.takeoverMode === 'system-proxy') {
+          await this.proxyGuard.enableSystemProxy(MIXED_PROXY_PORT);
+        } else {
+          await this.proxyGuard.disableSystemProxy();
+        }
+      } catch (err) {
+        if (mySession !== this.sessionId) return;
+        await this.stopProcessOnly();
+        this.cleanupTempConfig();
+        this.status = 'disconnected';
+        this.lastError = `设置 Windows 系统代理失败: ${err instanceof Error ? err.message : String(err)}`;
+        this.emit(0, 0);
+        return;
+      }
+
+      if (mySession !== this.sessionId || child.exitCode !== null) return;
+      this.status = 'connected';
+      this.uptimeSeconds = 0;
+      this.emit(0, 0);
+      return;
     }
 
-    // Demo Sandbox Handshake (smooth 3-stage state transition)
-    if (this.handshakeTimer) clearInterval(this.handshakeTimer);
+    // Demo Sandbox Handshake (never touches system proxy or writes credentials)
     this.handshakeTimer = setInterval(() => {
+      if (mySession !== this.sessionId) {
+        if (this.handshakeTimer) clearInterval(this.handshakeTimer);
+        return;
+      }
       this.handshakeStep++;
       if (this.handshakeStep >= 3) {
         if (this.handshakeTimer) clearInterval(this.handshakeTimer);
+        this.handshakeTimer = null;
         this.status = 'connected';
         this.uptimeSeconds = 0;
         this.burstTicks = 5;
@@ -169,25 +289,36 @@ export class SingBoxManager {
   }
 
   async disconnect(): Promise<void> {
+    this.sessionId++;
     if (this.handshakeTimer) {
       clearInterval(this.handshakeTimer);
       this.handshakeTimer = null;
     }
     await this.stopProcessOnly();
+    this.cleanupTempConfig();
     await this.proxyGuard.disableSystemProxy();
     this.status = 'disconnected';
+    this.killSwitchTripped = false;
     this.lastError = undefined;
+    this.emit(0, 0);
+  }
+
+  async clearKillSwitchAndRestore(): Promise<void> {
+    this.killSwitchTripped = false;
+    this.lastError = undefined;
+    await this.proxyGuard.disableSystemProxy();
     this.emit(0, 0);
   }
 
   private async stopProcessOnly(): Promise<void> {
     if (this.proc) {
+      const target = this.proc;
+      this.proc = null;
       try {
-        this.proc.kill('SIGTERM');
+        target.kill('SIGTERM');
       } catch {
         // ignore
       }
-      this.proc = null;
     }
   }
 
@@ -201,9 +332,15 @@ export class SingBoxManager {
       clearTimeout(timeout);
       if (!res.ok) return null;
       const data = (await res.json()) as { downloadTotal?: number; uploadTotal?: number };
-      const down = Number((((data.downloadTotal || 0) % 15000000) / (1024 * 1024)).toFixed(1));
-      const up = Number((((data.uploadTotal || 0) % 4000000) / (1024 * 1024)).toFixed(1));
-      return { down, up };
+      const curDown = data.downloadTotal || 0;
+      const curUp = data.uploadTotal || 0;
+      const deltaDown = this.prevTrafficBytes.down > 0 ? Math.max(0, curDown - this.prevTrafficBytes.down) : 0;
+      const deltaUp = this.prevTrafficBytes.up > 0 ? Math.max(0, curUp - this.prevTrafficBytes.up) : 0;
+      this.prevTrafficBytes = { down: curDown, up: curUp };
+      return {
+        down: Number((deltaDown / (1024 * 1024)).toFixed(2)),
+        up: Number((deltaUp / (1024 * 1024)).toFixed(2))
+      };
     } catch {
       return null;
     }
@@ -237,7 +374,7 @@ export class SingBoxManager {
         }
 
         this.totalGB = Number((this.totalGB + (down + up) / 1024).toFixed(2));
-        if (Math.random() > 0.45) {
+        if (this.engineMode === 'demo' && Math.random() > 0.45) {
           this.blockedCount += Math.floor(Math.random() * 3) + 1;
         }
       }

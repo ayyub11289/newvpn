@@ -22,6 +22,14 @@ export interface VpnNode {
   outbound?: Record<string, unknown>;
 }
 
+export interface SubscriptionProfile {
+  id: string;
+  name: string;
+  url: string;
+  nodeCount: number;
+  updatedAt: string;
+}
+
 export interface SplitAppRule {
   id: string;
   name: string;
@@ -55,6 +63,17 @@ export interface ConnectRequest {
   splitApps: SplitAppRule[];
 }
 
+export interface VaultState {
+  customNodes: VpnNode[];
+  subscriptions: SubscriptionProfile[];
+  activeNodeId: string | null;
+  entryNodeId: string | null;
+  multiHop: boolean;
+  protocol: ProtocolMode;
+  takeoverMode: TakeoverMode;
+  encryptedAtRest: boolean;
+}
+
 export interface CoreCapabilities {
   hasSingBox: boolean;
   hasWintun: boolean;
@@ -78,6 +97,7 @@ export interface TelemetrySnapshot {
   activeNodeId: string;
   wifiSsid: string | null;
   wifiOpen: boolean;
+  killSwitchTripped: boolean;
   error?: string;
 }
 
@@ -87,6 +107,7 @@ export interface LeakAuditItem {
   detail: string;
   status: 'pass' | 'warn' | 'idle';
   badge: string;
+  verified: boolean;
 }
 
 export interface ImportResult {
@@ -103,4 +124,3 @@ export interface UpdateState {
   progress: number;
   message: string;
 }
-

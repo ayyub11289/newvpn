@@ -24,6 +24,14 @@ export interface VpnNode {
   outbound?: Record<string, unknown>;
 }
 
+export interface SubscriptionProfile {
+  id: string;
+  name: string;
+  url: string;
+  nodeCount: number;
+  updatedAt: string;
+}
+
 export interface SplitAppRule {
   id: string;
   name: string;
@@ -57,6 +65,17 @@ export interface ConnectRequest {
   splitApps: SplitAppRule[];
 }
 
+export interface VaultState {
+  customNodes: VpnNode[];
+  subscriptions: SubscriptionProfile[];
+  activeNodeId: string | null;
+  entryNodeId: string | null;
+  multiHop: boolean;
+  protocol: ProtocolMode;
+  takeoverMode: TakeoverMode;
+  encryptedAtRest: boolean;
+}
+
 export interface CoreCapabilities {
   hasSingBox: boolean;
   hasWintun: boolean;
@@ -80,6 +99,7 @@ export interface TelemetrySnapshot {
   activeNodeId: string;
   wifiSsid: string | null;
   wifiOpen: boolean;
+  killSwitchTripped: boolean;
   error?: string;
 }
 
@@ -89,20 +109,13 @@ export interface LeakAuditItem {
   detail: string;
   status: 'pass' | 'warn' | 'idle';
   badge: string;
+  verified: boolean;
 }
 
 export interface ImportResult {
   ok: boolean;
   nodes: VpnNode[];
   message: string;
-}
-
-export interface SubscriptionProfile {
-  id: string;
-  name: string;
-  url: string;
-  nodeCount: number;
-  updatedAt: string;
 }
 
 export interface UpdateState {
@@ -116,12 +129,15 @@ export interface UpdateState {
 
 export interface VeilBridgeAPI {
   getCapabilities: () => Promise<CoreCapabilities>;
+  getVault: () => Promise<VaultState>;
+  updateVault: (patch: Partial<VaultState>) => Promise<VaultState>;
   connect: (req: ConnectRequest) => Promise<void>;
   disconnect: () => Promise<void>;
+  clearKillSwitch: () => Promise<void>;
   triggerBurst: () => Promise<void>;
   importFromUrl: (url: string) => Promise<ImportResult>;
   importFromText: (text: string, label?: string) => Promise<ImportResult>;
-  runLeakAudit: (netShield: boolean, pq: boolean) => Promise<LeakAuditItem[]>;
+  runLeakAudit: (takeoverMode: TakeoverMode, netShield: boolean, killSwitch: boolean) => Promise<LeakAuditItem[]>;
   pingNode: (host: string, port: number) => Promise<number>;
   openBinFolder: () => Promise<void>;
   relaunchElevated: () => Promise<boolean>;
@@ -134,6 +150,7 @@ export interface VeilBridgeAPI {
   installUpdate: () => Promise<void>;
   windowControl: (action: 'minimize' | 'maximize' | 'hide-to-tray' | 'show-main') => Promise<void>;
   onTelemetry: (cb: (snap: TelemetrySnapshot) => void) => () => void;
+  onVaultChanged: (cb: (vault: VaultState) => void) => () => void;
   onUpdateState: (cb: (state: UpdateState) => void) => () => void;
   onQuickAction: (cb: (action: string) => void) => () => void;
 }

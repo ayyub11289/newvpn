@@ -19,13 +19,15 @@ import { SingBoxManager } from './core/singboxManager';
 import { fetchSubscriptionFromUrl, parseSubscriptionContent } from './core/subscriptionParser';
 import { measureTcpPing, runRealLeakAudit } from './core/leakAuditor';
 import { AppUpdaterController } from './core/updater';
-import { ConnectRequest, TelemetrySnapshot, TunnelStatus, UpdateState } from './types';
+import { SecureVault } from './core/secureVault';
+import { ConnectRequest, TakeoverMode, TelemetrySnapshot, TunnelStatus, UpdateState, VaultState } from './types';
 
 let mainWindow: BrowserWindow | null = null;
 let trayWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let manager: SingBoxManager | null = null;
 let updater: AppUpdaterController | null = null;
+let vault: SecureVault | null = null;
 let isQuitting = false;
 let latestTelemetry: TelemetrySnapshot | null = null;
 
@@ -271,9 +273,24 @@ function broadcastTelemetry(snap: TelemetrySnapshot): void {
   trayWindow?.webContents.send('tunnel:telemetry', snap);
 }
 
+function broadcastVault(state: VaultState): void {
+  mainWindow?.webContents.send('vault:changed', state);
+  trayWindow?.webContents.send('vault:changed', state);
+}
+
 function registerIpc(): void {
   ipcMain.handle('core:capabilities', async () => {
     return manager!.getCapabilities();
+  });
+
+  ipcMain.handle('vault:get', () => {
+    return vault!.getState();
+  });
+
+  ipcMain.handle('vault:update', (_e, patch: Partial<VaultState>) => {
+    const next = vault!.update(patch);
+    broadcastVault(next);
+    return next;
   });
 
   ipcMain.handle('tunnel:connect', async (_e, req: ConnectRequest) => {
@@ -282,6 +299,10 @@ function registerIpc(): void {
 
   ipcMain.handle('tunnel:disconnect', async () => {
     await manager!.disconnect();
+  });
+
+  ipcMain.handle('tunnel:clear-killswitch', async () => {
+    await manager!.clearKillSwitchAndRestore();
   });
 
   ipcMain.handle('tunnel:burst', () => {
@@ -312,10 +333,16 @@ function registerIpc(): void {
     return { ok: true, nodes, message: `成功导入 ${nodes.length} 个配置节点` };
   });
 
-  ipcMain.handle('diag:leak-audit', async (_e, netShield: boolean, pq: boolean) => {
+  ipcMain.handle('diag:leak-audit', async (_e, takeoverMode: TakeoverMode, netShield: boolean, killSwitch: boolean) => {
     const connected = latestTelemetry?.status === 'connected';
     const mode = latestTelemetry?.engineMode ?? 'demo';
-    return runRealLeakAudit(connected, mode, netShield, pq);
+    return runRealLeakAudit({
+      connected,
+      engineMode: mode,
+      takeoverMode,
+      netShieldEnabled: netShield,
+      killSwitchEnabled: killSwitch
+    });
   });
 
   ipcMain.handle('diag:ping-node', async (_e, host: string, port: number) => {
@@ -398,6 +425,7 @@ app.whenReady().then(async () => {
   const binDir = getBinDir();
   fs.mkdirSync(binDir, { recursive: true });
 
+  vault = new SecureVault(app.getPath('userData'));
   manager = new SingBoxManager(binDir, app.getPath('userData'), broadcastTelemetry);
   await manager.init();
 

@@ -33,54 +33,13 @@ import { DiagnosticsView } from './views/DiagnosticsView';
 
 const KEY_HASHES = ['9f8a…4e2c', '3c71…b809', 'e412…7d9a', '7a05…c31f'];
 const HISTORY_LEN = 50;
-const CUSTOM_NODES_KEY = 'veil_custom_nodes';
-const SUBS_KEY = 'veil_subscriptions_v1';
-
-function saveCustomNodes(allNodes: VpnNode[]): void {
-  try {
-    const customOnly = allNodes.filter((n) => n.source !== 'demo');
-    localStorage.setItem(CUSTOM_NODES_KEY, JSON.stringify(customOnly));
-  } catch {
-    // ignore storage quota errors
-  }
-}
-
-function saveSubscriptions(subs: SubscriptionProfile[]): void {
-  try {
-    localStorage.setItem(SUBS_KEY, JSON.stringify(subs));
-  } catch {
-    // ignore
-  }
-}
+const LEGACY_NODES_KEY = 'veil_custom_nodes';
+const LEGACY_SUBS_KEY = 'veil_subscriptions_v1';
 
 export const App: React.FC = () => {
-  const [nodes, setNodes] = useState<VpnNode[]>(() => {
-    try {
-      const saved = localStorage.getItem(CUSTOM_NODES_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved) as VpnNode[];
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return [...parsed, ...DEFAULT_DEMO_NODES];
-        }
-      }
-    } catch {
-      // fallback
-    }
-    return DEFAULT_DEMO_NODES;
-  });
-
-  const [subscriptions, setSubscriptions] = useState<SubscriptionProfile[]>(() => {
-    try {
-      const saved = localStorage.getItem(SUBS_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved) as SubscriptionProfile[];
-        if (Array.isArray(parsed)) return parsed;
-      }
-    } catch {
-      // fallback
-    }
-    return [];
-  });
+  const [nodes, setNodes] = useState<VpnNode[]>(DEFAULT_DEMO_NODES);
+  const [subscriptions, setSubscriptions] = useState<SubscriptionProfile[]>([]);
+  const [encryptedVault, setEncryptedVault] = useState(true);
 
   const [refreshingSubId, setRefreshingSubId] = useState<string | null>(null);
   const [refreshingAllSubs, setRefreshingAllSubs] = useState(false);
@@ -89,7 +48,7 @@ export const App: React.FC = () => {
   const [projection, setProjection] = useState<MapProjection>('globe');
   const [status, setStatus] = useState<TunnelStatus>('disconnected');
   const [handshakeStep, setHandshakeStep] = useState(0);
-  const [activeNodeId, setActiveNodeId] = useState(nodes[0].id);
+  const [activeNodeId, setActiveNodeId] = useState(DEFAULT_DEMO_NODES[0].id);
   const [entryNodeId, setEntryNodeId] = useState('ch-zrh');
   const [multiHop, setMultiHop] = useState(false);
   const [protocol, setProtocol] = useState<ProtocolMode>('wireguard');
@@ -98,6 +57,7 @@ export const App: React.FC = () => {
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [lightMode, setLightMode] = useState(false);
   const [autoStart, setAutoStart] = useState(false);
+  const [killSwitchTripped, setKillSwitchTripped] = useState(false);
   const [cmdkOpen, setCmdkOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
@@ -128,7 +88,7 @@ export const App: React.FC = () => {
 
   const [updateState, setUpdateState] = useState<UpdateState>({
     status: 'idle',
-    currentVersion: '1.0.0',
+    currentVersion: '1.1.0',
     latestVersion: null,
     releaseUrl: 'https://github.com/ayyub11289/newvpn/releases',
     progress: 0,
@@ -136,10 +96,10 @@ export const App: React.FC = () => {
   });
 
   const [auditItems, setAuditItems] = useState<LeakAuditItem[]>([
-    { id: 'dns', title: 'DNS 隧道内解析校验', detail: '连接隧道后自动校验 DoH 解析通道', status: 'idle', badge: '未连接' },
-    { id: 'webrtc', title: 'WebRTC 真实内网探测拦截', detail: '校验 STUN 候选地址屏蔽状态', status: 'idle', badge: '未连接' },
-    { id: 'ipv6', title: 'IPv6 双栈旁路阻断验证', detail: '确保双栈流量不绕过本地隧道', status: 'idle', badge: '未连接' },
-    { id: 'pq', title: '后量子前向保密握手校验', detail: '校验 X25519 + ML-KEM 混合握手', status: 'idle', badge: '未连接' }
+    { id: 'tunnel-probe', title: '隧道端到端连通与出口 IP 实测', detail: '连接真实内核后经 127.0.0.1:7890 实测公网出口 IP', status: 'idle', badge: '待检测', verified: false },
+    { id: 'dns-check', title: '系统 DNS 与隧道解析状态', detail: '检测当前接管模式下的实际 DNS 范围', status: 'idle', badge: '待检测', verified: false },
+    { id: 'killswitch-scope', title: 'Kill Switch 断网保护边界', detail: '展示当前接管模式的崩溃阻断范围', status: 'idle', badge: '待检测', verified: false },
+    { id: 'policy-shield', title: 'NetShield 与浏览器 WebRTC 说明', detail: '展示内核路由规则与外部浏览器防护边界', status: 'idle', badge: '待检测', verified: false }
   ]);
   const [auditLoading, setAuditLoading] = useState(false);
   const [toast, setToast] = useState<string | null>(null);
@@ -148,7 +108,7 @@ export const App: React.FC = () => {
   const showToast = useCallback((msg: string) => {
     setToast(msg);
     if (toastTimerRef.current) window.clearTimeout(toastTimerRef.current);
-    toastTimerRef.current = window.setTimeout(() => setToast(null), 2800);
+    toastTimerRef.current = window.setTimeout(() => setToast(null), 3200);
   }, []);
 
   const activeNode = useMemo(() => nodes.find((n) => n.id === activeNodeId) || nodes[0], [nodes, activeNodeId]);
@@ -182,23 +142,78 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('pointermove', onMove);
   }, []);
 
-  const refreshCapabilities = useCallback(async () => {
+  // Load encrypted DPAPI vault & migrate any legacy plaintext localStorage data once
+  const refreshSystemState = useCallback(async () => {
     if (!window.veilAPI) return;
-    const [cap, auto, upd] = await Promise.all([
+    const [cap, auto, upd, vault] = await Promise.all([
       window.veilAPI.getCapabilities(),
       window.veilAPI.getAutoStart(),
-      window.veilAPI.getUpdateState()
+      window.veilAPI.getUpdateState(),
+      window.veilAPI.getVault()
     ]);
+
     setCapabilities(cap);
     setAutoStart(auto);
     setUpdateState(upd);
+    setEncryptedVault(vault.encryptedAtRest);
+
+    let customNodes = vault.customNodes;
+    let subs = vault.subscriptions;
+
+    // One-time silent migration from v1.0.0 plaintext localStorage to DPAPI vault
+    try {
+      const legacyNodesRaw = localStorage.getItem(LEGACY_NODES_KEY);
+      const legacySubsRaw = localStorage.getItem(LEGACY_SUBS_KEY);
+      if (legacyNodesRaw || legacySubsRaw) {
+        if (customNodes.length === 0 && legacyNodesRaw) {
+          const parsed = JSON.parse(legacyNodesRaw) as VpnNode[];
+          if (Array.isArray(parsed)) customNodes = parsed;
+        }
+        if (subs.length === 0 && legacySubsRaw) {
+          const parsedS = JSON.parse(legacySubsRaw) as SubscriptionProfile[];
+          if (Array.isArray(parsedS)) subs = parsedS;
+        }
+        await window.veilAPI.updateVault({ customNodes, subscriptions: subs });
+        localStorage.removeItem(LEGACY_NODES_KEY);
+        localStorage.removeItem(LEGACY_SUBS_KEY);
+      }
+    } catch {
+      // ignore migration errors
+    }
+
+    const merged = [...customNodes, ...DEFAULT_DEMO_NODES];
+    setNodes(merged);
+    setSubscriptions(subs);
+    if (vault.activeNodeId && merged.some((n) => n.id === vault.activeNodeId)) {
+      setActiveNodeId(vault.activeNodeId);
+    } else if (customNodes[0]) {
+      setActiveNodeId(customNodes[0].id);
+    }
+    if (vault.entryNodeId) setEntryNodeId(vault.entryNodeId);
+    setMultiHop(vault.multiHop);
+    setProtocol(vault.protocol);
+    setTakeoverMode(vault.takeoverMode);
   }, []);
 
   useEffect(() => {
-    void refreshCapabilities();
-  }, [refreshCapabilities]);
+    void refreshSystemState();
+  }, [refreshSystemState]);
 
-  // Listen to Electron auto-updater events
+  // Keep synced when Tray Popover modifies active node or vault
+  useEffect(() => {
+    if (!window.veilAPI) return;
+    return window.veilAPI.onVaultChanged((v) => {
+      setEncryptedVault(v.encryptedAtRest);
+      setSubscriptions(v.subscriptions);
+      setNodes([...v.customNodes, ...DEFAULT_DEMO_NODES]);
+      if (v.activeNodeId) setActiveNodeId(v.activeNodeId);
+      if (v.entryNodeId) setEntryNodeId(v.entryNodeId);
+      setMultiHop(v.multiHop);
+      setProtocol(v.protocol);
+      setTakeoverMode(v.takeoverMode);
+    });
+  }, []);
+
   useEffect(() => {
     if (!window.veilAPI) return;
     return window.veilAPI.onUpdateState((next) => {
@@ -214,6 +229,8 @@ export const App: React.FC = () => {
 
   const prevStatusRef = useRef<TunnelStatus>('disconnected');
   const prevStepRef = useRef<number>(0);
+  const lastErrorRef = useRef<string | undefined>(undefined);
+
   useEffect(() => {
     if (!window.veilAPI) return;
     return window.veilAPI.onTelemetry((snap) => {
@@ -229,6 +246,7 @@ export const App: React.FC = () => {
 
       setStatus(snap.status);
       setHandshakeStep(snap.handshakeStep);
+      setKillSwitchTripped(snap.killSwitchTripped);
       setCapabilities((prev) => (prev.engineMode === snap.engineMode ? prev : { ...prev, engineMode: snap.engineMode }));
       setDownSpeed(snap.downMBps);
       setUpSpeed(snap.upMBps);
@@ -243,8 +261,11 @@ export const App: React.FC = () => {
       if (snap.status === 'connected') {
         setKeyRotateSeconds((prev) => (prev <= 1 ? 180 : prev - 1));
       }
-      if (snap.error) {
+      if (snap.error && snap.error !== lastErrorRef.current) {
+        lastErrorRef.current = snap.error;
         showToast(`内核提示: ${snap.error}`);
+      } else if (!snap.error) {
+        lastErrorRef.current = undefined;
       }
     });
   }, [showToast]);
@@ -266,6 +287,12 @@ export const App: React.FC = () => {
       setActiveNodeId(targetNode.id);
 
       if (window.veilAPI) {
+        await window.veilAPI.updateVault({
+          activeNodeId: targetNode.id,
+          multiHop: mh,
+          protocol: pr,
+          takeoverMode: tm
+        });
         await window.veilAPI.connect({
           node: targetNode,
           entryNode,
@@ -310,21 +337,21 @@ export const App: React.FC = () => {
     soundEngine.playTick(960);
     try {
       const netShield = security.find((s) => s.id === 'netshield')?.enabled ?? true;
-      const pq = security.find((s) => s.id === 'pqkem')?.enabled ?? true;
+      const killSwitch = security.find((s) => s.id === 'killswitch')?.enabled ?? true;
       if (window.veilAPI) {
-        const res = await window.veilAPI.runLeakAudit(netShield, pq);
+        const res = await window.veilAPI.runLeakAudit(takeoverMode, netShield, killSwitch);
         setAuditItems(res);
       }
       if (status === 'connected') {
         soundEngine.playConnected();
-        showToast('零泄露安全自检完成');
+        showToast('链路实测与策略校验完成');
       } else {
-        showToast('当前未连接，建议连接隧道后再次校验');
+        showToast('当前未连接，请连接真实节点后执行实测');
       }
     } finally {
       setAuditLoading(false);
     }
-  }, [security, status, showToast]);
+  }, [security, takeoverMode, status, showToast]);
 
   const handleCopyProxyEnv = useCallback(() => {
     const cmd = '$env:HTTPS_PROXY="http://127.0.0.1:7890"; $env:HTTP_PROXY="http://127.0.0.1:7890"; $env:ALL_PROXY="socks5://127.0.0.1:7891"';
@@ -349,19 +376,19 @@ export const App: React.FC = () => {
     showToast('节点实测延迟已刷新 ✓');
   }, [nodes, showToast]);
 
-  const mergeSubNodes = useCallback((subId: string, incoming: VpnNode[]) => {
-    const tagged = incoming.map((n, idx) => ({ ...n, id: `${subId}::${idx}::${n.id}` }));
-    setNodes((prev) => {
-      const kept = prev.filter((n) => !n.id.startsWith(`${subId}::`));
-      const merged = [...tagged, ...kept];
-      saveCustomNodes(merged);
-      return merged;
-    });
-    if (tagged[0]) setActiveNodeId(tagged[0].id);
+  const persistVaultNodes = useCallback(async (allNodes: VpnNode[], subs: SubscriptionProfile[], newActiveId?: string) => {
+    const customOnly = allNodes.filter((n) => n.source !== 'demo');
+    if (window.veilAPI) {
+      await window.veilAPI.updateVault({
+        customNodes: customOnly,
+        subscriptions: subs,
+        ...(newActiveId ? { activeNodeId: newActiveId } : {})
+      });
+    }
   }, []);
 
   const handleImportedUrl = useCallback(
-    (url: string, name: string, imported: VpnNode[], msg: string) => {
+    async (url: string, name: string, imported: VpnNode[], msg: string) => {
       soundEngine.playConnected();
       const existing = subscriptions.find((s) => s.url === url);
       const subId = existing ? existing.id : `sub_${Date.now().toString(36)}`;
@@ -373,31 +400,31 @@ export const App: React.FC = () => {
         nodeCount: imported.length,
         updatedAt: nowStr
       };
-      setSubscriptions((prev) => {
-        const next = [nextSub, ...prev.filter((s) => s.id !== subId)];
-        saveSubscriptions(next);
-        return next;
-      });
-      mergeSubNodes(subId, imported);
-      void refreshCapabilities();
-      showToast(msg);
+      const nextSubs = [nextSub, ...subscriptions.filter((s) => s.id !== subId)];
+      const tagged = imported.map((n, idx) => ({ ...n, id: `${subId}::${idx}::${n.id}` }));
+      const kept = nodes.filter((n) => !n.id.startsWith(`${subId}::`));
+      const merged = [...tagged, ...kept];
+      setSubscriptions(nextSubs);
+      setNodes(merged);
+      const firstId = tagged[0]?.id;
+      if (firstId) setActiveNodeId(firstId);
+      await persistVaultNodes(merged, nextSubs, firstId);
+      showToast(`${msg}（已 DPAPI 加密保存并同步至托盘）`);
     },
-    [subscriptions, mergeSubNodes, refreshCapabilities, showToast]
+    [subscriptions, nodes, persistVaultNodes, showToast]
   );
 
   const handleImportedText = useCallback(
-    (imported: VpnNode[], msg: string) => {
+    async (imported: VpnNode[], msg: string) => {
       soundEngine.playConnected();
-      setNodes((prev) => {
-        const merged = [...imported, ...prev];
-        saveCustomNodes(merged);
-        return merged;
-      });
-      if (imported[0]) setActiveNodeId(imported[0].id);
-      void refreshCapabilities();
-      showToast(msg);
+      const merged = [...imported, ...nodes];
+      setNodes(merged);
+      const firstId = imported[0]?.id;
+      if (firstId) setActiveNodeId(firstId);
+      await persistVaultNodes(merged, subscriptions, firstId);
+      showToast(`${msg}（已 DPAPI 加密保存并同步至托盘）`);
     },
-    [refreshCapabilities, showToast]
+    [nodes, subscriptions, persistVaultNodes, showToast]
   );
 
   const handleRefreshSub = useCallback(
@@ -409,14 +436,15 @@ export const App: React.FC = () => {
         const res = await window.veilAPI.importFromUrl(sub.url);
         if (res.ok) {
           const nowStr = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
-          setSubscriptions((prev) => {
-            const next = prev.map((s) =>
-              s.id === sub.id ? { ...s, nodeCount: res.nodes.length, updatedAt: nowStr } : s
-            );
-            saveSubscriptions(next);
-            return next;
-          });
-          mergeSubNodes(sub.id, res.nodes);
+          const nextSubs = subscriptions.map((s) =>
+            s.id === sub.id ? { ...s, nodeCount: res.nodes.length, updatedAt: nowStr } : s
+          );
+          const tagged = res.nodes.map((n, idx) => ({ ...n, id: `${sub.id}::${idx}::${n.id}` }));
+          const kept = nodes.filter((n) => !n.id.startsWith(`${sub.id}::`));
+          const merged = [...tagged, ...kept];
+          setSubscriptions(nextSubs);
+          setNodes(merged);
+          await persistVaultNodes(merged, nextSubs);
           soundEngine.playConnected();
           showToast(`已刷新「${sub.name}」(${res.nodes.length} 个节点)`);
         } else {
@@ -426,7 +454,7 @@ export const App: React.FC = () => {
         setRefreshingSubId(null);
       }
     },
-    [mergeSubNodes, showToast]
+    [subscriptions, nodes, persistVaultNodes, showToast]
   );
 
   const handleRefreshAllSubs = useCallback(async () => {
@@ -443,21 +471,16 @@ export const App: React.FC = () => {
   }, [subscriptions, handleRefreshSub]);
 
   const handleRemoveSub = useCallback(
-    (id: string) => {
+    async (id: string) => {
       soundEngine.playTick(760);
-      setSubscriptions((prev) => {
-        const next = prev.filter((s) => s.id !== id);
-        saveSubscriptions(next);
-        return next;
-      });
-      setNodes((prev) => {
-        const kept = prev.filter((n) => !n.id.startsWith(`${id}::`));
-        saveCustomNodes(kept);
-        return kept;
-      });
+      const nextSubs = subscriptions.filter((s) => s.id !== id);
+      const kept = nodes.filter((n) => !n.id.startsWith(`${id}::`));
+      setSubscriptions(nextSubs);
+      setNodes(kept);
+      await persistVaultNodes(kept, nextSubs);
       showToast('已删除该订阅及其关联节点');
     },
-    [showToast]
+    [subscriptions, nodes, persistVaultNodes, showToast]
   );
 
   const handleToggleAutoStart = useCallback(async () => {
@@ -526,13 +549,15 @@ export const App: React.FC = () => {
         label: multiHop ? '关闭 Multi-Hop 双重跳板' : '开启 Multi-Hop 双重跳板 (detour)',
         hint: '2x Relay',
         run: () => {
-          setMultiHop((v) => !v);
-          showToast(!multiHop ? '已开启双重跳板' : '已切换为单跳模式');
+          const next = !multiHop;
+          setMultiHop(next);
+          void window.veilAPI?.updateVault({ multiHop: next });
+          showToast(next ? '已开启双重跳板' : '已切换为单跳模式');
         }
       },
       {
         id: 'run-audit',
-        label: '执行 DNS / WebRTC / IPv6 零泄露安全自检',
+        label: '执行隧道实网出口与策略校验',
         hint: 'Diagnostics',
         run: () => {
           setTab('diagnostics');
@@ -577,12 +602,13 @@ export const App: React.FC = () => {
         <div
           className="ambient-orb-1 absolute -top-24 -left-16 w-[450px] h-[450px] rounded-full opacity-25"
           style={{
-            background:
-              status === 'connected'
-                ? 'var(--success)'
-                : status === 'connecting'
-                ? 'var(--warning)'
-                : 'var(--primary)'
+            background: killSwitchTripped
+              ? 'var(--error)'
+              : status === 'connected'
+              ? 'var(--success)'
+              : status === 'connecting'
+              ? 'var(--warning)'
+              : 'var(--primary)'
           }}
         />
         <div
@@ -643,6 +669,27 @@ export const App: React.FC = () => {
       {/* Independent Scrollable Content Viewport */}
       <div className="relative z-10 flex-1 min-h-0 overflow-y-auto px-3 md:px-4 pt-1.5 pb-4">
         <div className="max-w-7xl mx-auto flex flex-col gap-3.5">
+          {killSwitchTripped && (
+            <div className="glass-surface rounded-2xl px-4 py-3 border-[var(--error)] flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2.5">
+                <span className="w-2.5 h-2.5 rounded-full" style={{ background: 'var(--error)', boxShadow: '0 0 10px var(--error)' }} />
+                <div>
+                  <div className="font-semibold text-[var(--error)]">Kill Switch 已触发：内核意外退出，系统代理已锁定防止明文回退</div>
+                  <div className="text-[var(--muted-foreground)] mt-0.5">
+                    请重新连接节点，或点击右侧按钮手动解除网络锁以恢复本地直连上网。
+                  </div>
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={() => void window.veilAPI?.clearKillSwitch()}
+                className="px-3.5 py-1.5 rounded-xl bg-[var(--error)] text-white font-semibold hover:opacity-90 cursor-pointer shrink-0"
+              >
+                解除网络锁并恢复本地网络
+              </button>
+            </div>
+          )}
+
           {tab === 'overview' && (
             <main className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 items-stretch">
               <PowerDial
@@ -664,22 +711,26 @@ export const App: React.FC = () => {
                 onChangeProtocol={(p) => {
                   soundEngine.playTick(900);
                   setProtocol(p);
+                  void window.veilAPI?.updateVault({ protocol: p });
                   if (status === 'connected') void connectWithNode(activeNode, { protocol: p });
                 }}
                 onChangeTakeover={(m) => {
                   soundEngine.playTick(920);
                   setTakeoverMode(m);
+                  void window.veilAPI?.updateVault({ takeoverMode: m });
                   if (status === 'connected') void connectWithNode(activeNode, { takeoverMode: m });
                 }}
                 onToggleMultiHop={() => {
                   soundEngine.playTick(880);
                   const next = !multiHop;
                   setMultiHop(next);
+                  void window.veilAPI?.updateVault({ multiHop: next });
                   if (status === 'connected') void connectWithNode(activeNode, { multiHop: next });
                 }}
                 onChangeEntryNode={(id) => {
                   soundEngine.playTick(880);
                   setEntryNodeId(id);
+                  void window.veilAPI?.updateVault({ entryNodeId: id });
                 }}
                 onOpenNodes={() => {
                   soundEngine.playTick(880);
@@ -745,7 +796,11 @@ export const App: React.FC = () => {
               onSelectNode={handleSelectNode}
               onToggleFav={(id) => {
                 soundEngine.playTick(1040);
-                setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, fav: !n.fav } : n)));
+                setNodes((prev) => {
+                  const next = prev.map((n) => (n.id === id ? { ...n, fav: !n.fav } : n));
+                  void persistVaultNodes(next, subscriptions);
+                  return next;
+                });
               }}
               onPingAll={() => void handlePingAll()}
               onRefreshAllSubs={() => void handleRefreshAllSubs()}
@@ -761,6 +816,7 @@ export const App: React.FC = () => {
               splitApps={splitApps}
               wifiSsid={wifiSsid}
               autoStart={autoStart}
+              encryptedVault={encryptedVault}
               onToggleAutoStart={() => void handleToggleAutoStart()}
               onToggleAutoPilot={(id) => {
                 soundEngine.playTick(920);
@@ -824,10 +880,10 @@ export const App: React.FC = () => {
         capabilities={capabilities}
         subscriptions={subscriptions}
         refreshingSubId={refreshingSubId}
-        onImportedUrl={handleImportedUrl}
-        onImportedText={handleImportedText}
+        onImportedUrl={(u, n, list, m) => void handleImportedUrl(u, n, list, m)}
+        onImportedText={(list, m) => void handleImportedText(list, m)}
         onRefreshSub={(sub) => void handleRefreshSub(sub)}
-        onRemoveSub={handleRemoveSub}
+        onRemoveSub={(id) => void handleRemoveSub(id)}
         onOpenBinFolder={() => void window.veilAPI?.openBinFolder()}
       />
 

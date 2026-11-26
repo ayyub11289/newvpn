@@ -1,6 +1,6 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { DEFAULT_AUTOPILOT, DEFAULT_DEMO_NODES, DEFAULT_SECURITY, DEFAULT_SPLIT_APPS } from '../data/worldBitmap';
-import { TelemetrySnapshot, VpnNode } from '../types';
+import { TelemetrySnapshot, VaultState, VpnNode } from '../types';
 import { soundEngine } from '../audio/soundEngine';
 
 function fmtDuration(sec: number): string {
@@ -11,7 +11,17 @@ function fmtDuration(sec: number): string {
 }
 
 export const TrayPopoverView: React.FC = () => {
-  const [nodes] = useState<VpnNode[]>(DEFAULT_DEMO_NODES);
+  const [vault, setVault] = useState<VaultState>({
+    customNodes: [],
+    subscriptions: [],
+    activeNodeId: null,
+    entryNodeId: null,
+    multiHop: false,
+    protocol: 'wireguard',
+    takeoverMode: 'system-proxy',
+    encryptedAtRest: true
+  });
+
   const [snap, setSnap] = useState<TelemetrySnapshot>({
     status: 'disconnected',
     handshakeStep: 0,
@@ -25,15 +35,48 @@ export const TrayPopoverView: React.FC = () => {
     activePing: 34,
     activeNodeId: 'jp-tyo',
     wifiSsid: null,
-    wifiOpen: false
+    wifiOpen: false,
+    killSwitchTripped: false
   });
 
   useEffect(() => {
     if (!window.veilAPI) return;
-    return window.veilAPI.onTelemetry((next) => setSnap(next));
+    void window.veilAPI.getVault().then((v) => setVault(v));
+    const unsubTel = window.veilAPI.onTelemetry((next) => setSnap(next));
+    const unsubVault = window.veilAPI.onVaultChanged((v) => setVault(v));
+    return () => {
+      unsubTel();
+      unsubVault();
+    };
   }, []);
 
-  const activeNode = nodes.find((n) => n.id === snap.activeNodeId) || nodes[0];
+  // Always prioritize real imported nodes from encrypted vault over demo nodes
+  const allNodes = useMemo<VpnNode[]>(() => {
+    return vault.customNodes.length > 0 ? [...vault.customNodes, ...DEFAULT_DEMO_NODES] : DEFAULT_DEMO_NODES;
+  }, [vault.customNodes]);
+
+  const activeNode = useMemo(() => {
+    const preferredId = vault.activeNodeId || snap.activeNodeId;
+    return allNodes.find((n) => n.id === preferredId) || allNodes[0];
+  }, [allNodes, vault.activeNodeId, snap.activeNodeId]);
+
+  const entryNode = useMemo(() => {
+    return allNodes.find((n) => n.id === vault.entryNodeId) || allNodes[Math.min(6, allNodes.length - 1)];
+  }, [allNodes, vault.entryNodeId]);
+
+  const connectNode = (target: VpnNode) => {
+    void window.veilAPI?.updateVault({ activeNodeId: target.id });
+    void window.veilAPI?.connect({
+      node: target,
+      entryNode,
+      multiHop: vault.multiHop,
+      protocol: vault.protocol,
+      takeoverMode: vault.takeoverMode,
+      security: DEFAULT_SECURITY,
+      autopilot: DEFAULT_AUTOPILOT,
+      splitApps: DEFAULT_SPLIT_APPS
+    });
+  };
 
   const handleToggle = () => {
     if (snap.status === 'connected' || snap.status === 'connecting') {
@@ -41,30 +84,13 @@ export const TrayPopoverView: React.FC = () => {
       void window.veilAPI?.disconnect();
     } else {
       soundEngine.playStep(0);
-      void window.veilAPI?.connect({
-        node: activeNode,
-        multiHop: false,
-        protocol: 'wireguard',
-        takeoverMode: 'system-proxy',
-        security: DEFAULT_SECURITY,
-        autopilot: DEFAULT_AUTOPILOT,
-        splitApps: DEFAULT_SPLIT_APPS
-      });
+      connectNode(activeNode);
     }
   };
 
-  const handleQuickNode = (n: VpnNode) => {
-    soundEngine.playTick(960);
-    void window.veilAPI?.connect({
-      node: n,
-      multiHop: false,
-      protocol: 'wireguard',
-      takeoverMode: 'system-proxy',
-      security: DEFAULT_SECURITY,
-      autopilot: DEFAULT_AUTOPILOT,
-      splitApps: DEFAULT_SPLIT_APPS
-    });
-  };
+  const quickList = useMemo(() => {
+    return (vault.customNodes.length > 0 ? vault.customNodes : DEFAULT_DEMO_NODES).slice(0, 4);
+  }, [vault.customNodes]);
 
   return (
     <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] p-3 flex flex-col justify-between relative overflow-hidden">
@@ -73,11 +99,15 @@ export const TrayPopoverView: React.FC = () => {
         className="pointer-events-none fixed -top-16 -left-16 w-64 h-64 rounded-full opacity-25"
         style={{
           filter: 'blur(64px)',
-          background: snap.status === 'connected' ? 'var(--success)' : 'var(--primary)'
+          background: snap.killSwitchTripped
+            ? 'var(--error)'
+            : snap.status === 'connected'
+            ? 'var(--success)'
+            : 'var(--primary)'
         }}
       />
 
-      <div className="glass-surface rounded-2xl p-4 flex flex-col gap-3.5 flex-1 relative z-10">
+      <div className="glass-surface rounded-2xl p-4 flex flex-col gap-3 flex-1 relative z-10">
         <div className="flex items-center justify-between text-xs">
           <div className="flex items-center gap-2">
             <span className="font-semibold tracking-tight">VEIL VPN</span>
@@ -89,6 +119,19 @@ export const TrayPopoverView: React.FC = () => {
             {snap.status === 'connected' ? fmtDuration(snap.uptimeSeconds) : '--:--:--'}
           </span>
         </div>
+
+        {snap.killSwitchTripped && (
+          <div className="p-2.5 rounded-xl border border-[var(--error)] bg-[var(--secondary)] text-xs flex items-center justify-between gap-2">
+            <span className="text-[var(--error)] font-medium">内核异常退出，网络锁已阻断回退</span>
+            <button
+              type="button"
+              onClick={() => void window.veilAPI?.clearKillSwitch()}
+              className="px-2 py-1 rounded-lg bg-[var(--error)] text-white text-xs shrink-0 cursor-pointer"
+            >
+              恢复网络
+            </button>
+          </div>
+        )}
 
         <div className="flex items-center gap-3.5 py-1">
           <button
@@ -129,7 +172,7 @@ export const TrayPopoverView: React.FC = () => {
               {activeNode.country} · {activeNode.city}
             </div>
             <div className="text-xs font-mono text-[var(--muted-foreground)] mt-0.5">
-              出口 {snap.activeIp}
+              {activeNode.source === 'demo' ? '演示节点' : activeNode.protocolType.toUpperCase()} · {snap.activeIp}
             </div>
           </div>
         </div>
@@ -146,13 +189,18 @@ export const TrayPopoverView: React.FC = () => {
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <span className="text-xs text-[var(--muted-foreground)]">快速切换线路</span>
+          <span className="text-xs text-[var(--muted-foreground)]">
+            {vault.customNodes.length > 0 ? '自有节点快捷切线' : '演示节点（请先在主界面导入订阅）'}
+          </span>
           <div className="grid grid-cols-2 gap-1.5">
-            {nodes.slice(0, 4).map((n) => (
+            {quickList.map((n) => (
               <button
                 key={n.id}
                 type="button"
-                onClick={() => handleQuickNode(n)}
+                onClick={() => {
+                  soundEngine.playTick(960);
+                  connectNode(n);
+                }}
                 className={`px-2.5 py-2 rounded-xl text-xs font-medium text-left transition cursor-pointer flex items-center justify-between ${
                   n.id === activeNode.id
                     ? 'glass-surface font-semibold'
