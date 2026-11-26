@@ -1,6 +1,7 @@
 {
   "name": "veil-vpn-win11",
   "version": "1.0.0",
+  "author": "VEIL Network",
   "description": "VEIL VPN — Windows 11 Optical Glass Desktop VPN Client powered by sing-box & Wintun",
   "main": "dist-electron/main.js",
   "private": true,

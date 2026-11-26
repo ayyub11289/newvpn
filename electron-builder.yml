@@ -20,7 +20,6 @@ publish:
   releaseType: release
 win:
   icon: resources/icon.ico
-  artifactName: VEIL-VPN-${version}-win-${arch}-${target}.${ext}
   target:
     - target: nsis
       arch:
@@ -30,6 +29,7 @@ win:
         - x64
   requestedExecutionLevel: asInvoker
 nsis:
+  artifactName: VEIL-VPN-${version}-win-${arch}-Setup.${ext}
   oneClick: false
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
@@ -37,3 +37,5 @@ nsis:
   shortcutName: VEIL VPN
   installerIcon: resources/icon.ico
   uninstallerIcon: resources/icon.ico
+portable:
+  artifactName: VEIL-VPN-${version}-win-${arch}-Portable.${ext}
