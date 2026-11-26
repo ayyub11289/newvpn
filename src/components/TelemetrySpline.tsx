@@ -39,8 +39,12 @@ export const TelemetrySpline: React.FC<TelemetrySplineProps> = ({
     const rect = wrap.getBoundingClientRect();
     const w = Math.max(200, Math.floor(rect.width));
     const h = Math.max(70, Math.floor(rect.height));
-    canvas.width = w * dpr;
-    canvas.height = h * dpr;
+    const targetW = w * dpr;
+    const targetH = h * dpr;
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+      canvas.width = targetW;
+      canvas.height = targetH;
+    }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
 
     const rootStyles = getComputedStyle(document.documentElement);

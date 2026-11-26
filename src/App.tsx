@@ -213,6 +213,7 @@ export const App: React.FC = () => {
   }, [showToast]);
 
   const prevStatusRef = useRef<TunnelStatus>('disconnected');
+  const prevStepRef = useRef<number>(0);
   useEffect(() => {
     if (!window.veilAPI) return;
     return window.veilAPI.onTelemetry((snap) => {
@@ -220,14 +221,15 @@ export const App: React.FC = () => {
         soundEngine.playConnected();
         setKeyIdx((k) => k + 1);
         setKeyRotateSeconds(180);
-      } else if (snap.status === 'connecting' && snap.handshakeStep !== handshakeStep) {
+      } else if (snap.status === 'connecting' && snap.handshakeStep !== prevStepRef.current) {
         soundEngine.playStep(snap.handshakeStep);
       }
       prevStatusRef.current = snap.status;
+      prevStepRef.current = snap.handshakeStep;
 
       setStatus(snap.status);
       setHandshakeStep(snap.handshakeStep);
-      setCapabilities((prev) => ({ ...prev, engineMode: snap.engineMode }));
+      setCapabilities((prev) => (prev.engineMode === snap.engineMode ? prev : { ...prev, engineMode: snap.engineMode }));
       setDownSpeed(snap.downMBps);
       setUpSpeed(snap.upMBps);
       setTotalGB(snap.totalGB);
@@ -245,7 +247,7 @@ export const App: React.FC = () => {
         showToast(`内核提示: ${snap.error}`);
       }
     });
-  }, [handshakeStep, showToast]);
+  }, [showToast]);
 
   const connectWithNode = useCallback(
     async (

@@ -67,8 +67,28 @@ export const SpatialGlobe: React.FC<SpatialGlobeProps> = ({
     camRef.current.targetLat = Math.max(-42, Math.min(52, (Math.asin(my) * 180) / Math.PI));
   }, [activeNode.id, activeNode.lon, activeNode.lat, projection]);
 
-  const propsRef = useRef({ nodes, activeNode, entryNode, multiHop, status, projection, lightMode, getEffectivePing });
-  propsRef.current = { nodes, activeNode, entryNode, multiHop, status, projection, lightMode, getEffectivePing };
+  const propsRef = useRef({
+    nodes,
+    activeNode,
+    entryNode,
+    multiHop,
+    status,
+    projection,
+    lightMode,
+    getEffectivePing,
+    onSelectNode
+  });
+  propsRef.current = {
+    nodes,
+    activeNode,
+    entryNode,
+    multiHop,
+    status,
+    projection,
+    lightMode,
+    getEffectivePing,
+    onSelectNode
+  };
 
   useEffect(() => {
     const wrap = wrapRef.current;
@@ -81,10 +101,16 @@ export const SpatialGlobe: React.FC<SpatialGlobeProps> = ({
       const dpr = Math.min(window.devicePixelRatio || 1, 2);
       const rect = wrap.getBoundingClientRect();
       if (rect.width > 40 && rect.height > 40) {
-        camRef.current.w = Math.floor(rect.width);
-        camRef.current.h = Math.floor(rect.height);
-        canvas.width = camRef.current.w * dpr;
-        canvas.height = camRef.current.h * dpr;
+        const nextW = Math.floor(rect.width);
+        const nextH = Math.floor(rect.height);
+        const targetPW = nextW * dpr;
+        const targetPH = nextH * dpr;
+        camRef.current.w = nextW;
+        camRef.current.h = nextH;
+        if (canvas.width !== targetPW || canvas.height !== targetPH) {
+          canvas.width = targetPW;
+          canvas.height = targetPH;
+        }
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
       }
     };
@@ -475,7 +501,7 @@ export const SpatialGlobe: React.FC<SpatialGlobeProps> = ({
         for (const n of propsRef.current.nodes) {
           const pt = projectPoint(n.lon, n.lat, gp);
           if (pt.visible && pt.rz > 0 && Math.hypot(mx - pt.x, my - pt.y) < 14) {
-            onSelectNode(n.id);
+            propsRef.current.onSelectNode(n.id);
             break;
           }
         }
@@ -546,7 +572,7 @@ export const SpatialGlobe: React.FC<SpatialGlobeProps> = ({
       wrap.removeEventListener('pointerleave', handleLeave);
       window.removeEventListener('pointerup', handlePointerUp);
     };
-  }, [onSelectNode]);
+  }, []);
 
   return (
     <div className="glass-surface spotlight-card rounded-2xl overflow-hidden relative min-h-[370px] flex-1 flex flex-col">
