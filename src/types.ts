@@ -97,6 +97,23 @@ export interface ImportResult {
   message: string;
 }
 
+export interface SubscriptionProfile {
+  id: string;
+  name: string;
+  url: string;
+  nodeCount: number;
+  updatedAt: string;
+}
+
+export interface UpdateState {
+  status: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'up-to-date' | 'error';
+  currentVersion: string;
+  latestVersion: string | null;
+  releaseUrl: string;
+  progress: number;
+  message: string;
+}
+
 export interface VeilBridgeAPI {
   getCapabilities: () => Promise<CoreCapabilities>;
   connect: (req: ConnectRequest) => Promise<void>;
@@ -109,8 +126,15 @@ export interface VeilBridgeAPI {
   openBinFolder: () => Promise<void>;
   relaunchElevated: () => Promise<boolean>;
   copyText: (text: string) => Promise<void>;
+  getAutoStart: () => Promise<boolean>;
+  setAutoStart: (enabled: boolean) => Promise<boolean>;
+  getUpdateState: () => Promise<UpdateState>;
+  checkForUpdates: () => Promise<UpdateState>;
+  downloadUpdate: () => Promise<void>;
+  installUpdate: () => Promise<void>;
   windowControl: (action: 'minimize' | 'maximize' | 'hide-to-tray' | 'show-main') => Promise<void>;
   onTelemetry: (cb: (snap: TelemetrySnapshot) => void) => () => void;
+  onUpdateState: (cb: (state: UpdateState) => void) => () => void;
   onQuickAction: (cb: (action: string) => void) => () => void;
 }
 

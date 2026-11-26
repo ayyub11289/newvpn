@@ -6,15 +6,17 @@
   "private": true,
   "scripts": {
     "dev": "node scripts/dev.mjs",
+    "gen-icon": "node scripts/gen-icon.mjs",
     "build:renderer": "vite build",
     "build:electron": "tsc -p tsconfig.electron.json",
     "build": "npm run build:renderer && npm run build:electron",
     "typecheck": "tsc --noEmit && tsc -p tsconfig.electron.json --noEmit",
     "start": "electron .",
     "fetch-core": "node scripts/fetch-core.mjs",
-    "dist:win": "npm run build && electron-builder --win"
+    "dist:win": "npm run gen-icon && npm run build && electron-builder --win"
   },
   "dependencies": {
+    "electron-updater": "^6.3.9",
     "js-yaml": "^4.1.0",
     "react": "^19.0.0",
     "react-dom": "^19.0.0"

@@ -6,6 +6,8 @@ interface SecurityViewProps {
   security: SecurityToggle[];
   splitApps: SplitAppRule[];
   wifiSsid: string | null;
+  autoStart: boolean;
+  onToggleAutoStart: () => void;
   onToggleAutoPilot: (id: AutoPilotRule['id']) => void;
   onToggleSecurity: (id: SecurityToggle['id']) => void;
   onToggleSplitApp: (id: string) => void;
@@ -17,6 +19,8 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
   security,
   splitApps,
   wifiSsid,
+  autoStart,
+  onToggleAutoStart,
   onToggleAutoPilot,
   onToggleSecurity,
   onToggleSplitApp,
@@ -70,6 +74,21 @@ export const SecurityView: React.FC<SecurityViewProps> = ({
           </p>
         </div>
         <div className="relative z-10 flex flex-col divide-y divide-[var(--card-border)]">
+          <div className="py-3 pt-1 flex items-center justify-between gap-3">
+            <div>
+              <div className="text-xs font-semibold">Windows 11 开机静默自启动</div>
+              <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                系统登录后自动静默驻留右下角托盘，不弹窗打扰
+              </p>
+            </div>
+            <button
+              type="button"
+              role="switch"
+              aria-checked={autoStart}
+              onClick={onToggleAutoStart}
+              className="veil-switch"
+            />
+          </div>
           {security.map((item) => (
             <div key={item.id} className="py-3 first:pt-1 last:pb-1 flex items-center justify-between gap-3">
               <div>

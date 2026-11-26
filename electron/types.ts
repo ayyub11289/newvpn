@@ -94,3 +94,13 @@ export interface ImportResult {
   nodes: VpnNode[];
   message: string;
 }
+
+export interface UpdateState {
+  status: 'idle' | 'checking' | 'available' | 'downloading' | 'downloaded' | 'up-to-date' | 'error';
+  currentVersion: string;
+  latestVersion: string | null;
+  releaseUrl: string;
+  progress: number;
+  message: string;
+}
+

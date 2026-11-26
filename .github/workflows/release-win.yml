@@ -1,0 +1,68 @@
+name: Build & Release VEIL VPN (Windows 11)
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Release version tag (e.g. v1.0.0). Leave empty to use package.json version."
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Sync version with tag if provided
+        shell: pwsh
+        run: |
+          $tag = "${{ github.event.inputs.release_tag }}"
+          if (-not $tag -and "${{ github.ref }}".StartsWith("refs/tags/v")) {
+            $tag = "${{ github.ref_name }}"
+          }
+          if ($tag) {
+            $ver = $tag.TrimStart("v")
+            npm version $ver --no-git-tag-version --allow-same-version
+            Write-Host "Using release version: $ver"
+          }
+
+      - name: Fetch official sing-box & wintun core binaries
+        run: npm run fetch-core
+
+      - name: Generate Windows application icon
+        run: npm run gen-icon
+
+      - name: Typecheck & build renderer + electron
+        run: |
+          npm run typecheck
+          npm run build
+
+      - name: Package Windows Installer & Portable (.exe) and Publish Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx electron-builder --win --publish always
+
+      - name: Upload build artifacts to workflow run
+        uses: actions/upload-artifact@v4
+        with:
+          name: VEIL-VPN-Windows-x64
+          path: |
+            release/*.exe
+            release/latest.yml
+          if-no-files-found: warn

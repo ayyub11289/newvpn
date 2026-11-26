@@ -18,12 +18,14 @@ import zlib from 'node:zlib';
 import { SingBoxManager } from './core/singboxManager';
 import { fetchSubscriptionFromUrl, parseSubscriptionContent } from './core/subscriptionParser';
 import { measureTcpPing, runRealLeakAudit } from './core/leakAuditor';
-import { ConnectRequest, TelemetrySnapshot, TunnelStatus } from './types';
+import { AppUpdaterController } from './core/updater';
+import { ConnectRequest, TelemetrySnapshot, TunnelStatus, UpdateState } from './types';
 
 let mainWindow: BrowserWindow | null = null;
 let trayWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let manager: SingBoxManager | null = null;
+let updater: AppUpdaterController | null = null;
 let isQuitting = false;
 let latestTelemetry: TelemetrySnapshot | null = null;
 
@@ -122,7 +124,13 @@ function getRendererUrl(hash = ''): string {
   return `file://${indexHtml.replace(/\\/g, '/')}${hash}`;
 }
 
+function getAppIconPath(): string | undefined {
+  const p = path.join(app.getAppPath(), 'resources', 'icon.ico');
+  return fs.existsSync(p) ? p : undefined;
+}
+
 function createMainWindow(): void {
+  const startHidden = process.argv.includes('--hidden');
   mainWindow = new BrowserWindow({
     width: 1240,
     height: 820,
@@ -130,6 +138,7 @@ function createMainWindow(): void {
     minHeight: 680,
     frame: false,
     title: 'VEIL VPN',
+    icon: getAppIconPath(),
     backgroundColor: '#090d16',
     ...(process.platform === 'win32' ? { backgroundMaterial: 'mica' as const } : {}),
     show: false,
@@ -142,7 +151,9 @@ function createMainWindow(): void {
   });
 
   mainWindow.once('ready-to-show', () => {
-    mainWindow?.show();
+    if (!startHidden) {
+      mainWindow?.show();
+    }
   });
 
   mainWindow.on('close', (e) => {
@@ -339,6 +350,35 @@ function registerIpc(): void {
     clipboard.writeText(text);
   });
 
+  ipcMain.handle('app:get-autostart', () => {
+    return app.getLoginItemSettings({ args: ['--hidden'] }).openAtLogin;
+  });
+
+  ipcMain.handle('app:set-autostart', (_e, enabled: boolean) => {
+    app.setLoginItemSettings({
+      openAtLogin: enabled,
+      args: ['--hidden']
+    });
+    return app.getLoginItemSettings({ args: ['--hidden'] }).openAtLogin;
+  });
+
+  ipcMain.handle('app:get-update-state', () => {
+    return updater!.getState();
+  });
+
+  ipcMain.handle('app:check-updates', async () => {
+    return updater!.checkForUpdates();
+  });
+
+  ipcMain.handle('app:download-update', async () => {
+    await updater!.downloadOrOpenRelease();
+  });
+
+  ipcMain.handle('app:install-update', async () => {
+    isQuitting = true;
+    await updater!.quitAndInstall();
+  });
+
   ipcMain.handle('window:control', (_e, action: string) => {
     if (action === 'minimize') mainWindow?.minimize();
     else if (action === 'maximize') {
@@ -361,10 +401,24 @@ app.whenReady().then(async () => {
   manager = new SingBoxManager(binDir, app.getPath('userData'), broadcastTelemetry);
   await manager.init();
 
+  updater = new AppUpdaterController(
+    (st: UpdateState) => {
+      mainWindow?.webContents.send('app:update-state', st);
+    },
+    async () => {
+      await manager?.shutdown();
+    }
+  );
+
   registerIpc();
   createMainWindow();
   createTrayPopoverWindow();
   setupTray();
+
+  // Silent background release check 8 seconds after startup
+  setTimeout(() => {
+    void updater?.checkForUpdates();
+  }, 8000);
 
   // Global Win11 Hotkey: Ctrl+Shift+V toggles VEIL Studio Window
   globalShortcut.register('CommandOrControl+Shift+V', () => {

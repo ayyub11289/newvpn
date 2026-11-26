@@ -8,8 +8,10 @@ import {
   ProtocolMode,
   SecurityToggle,
   SplitAppRule,
+  SubscriptionProfile,
   TakeoverMode,
   TunnelStatus,
+  UpdateState,
   VpnNode
 } from './types';
 import {
@@ -31,11 +33,30 @@ import { DiagnosticsView } from './views/DiagnosticsView';
 
 const KEY_HASHES = ['9f8a…4e2c', '3c71…b809', 'e412…7d9a', '7a05…c31f'];
 const HISTORY_LEN = 50;
+const CUSTOM_NODES_KEY = 'veil_custom_nodes';
+const SUBS_KEY = 'veil_subscriptions_v1';
+
+function saveCustomNodes(allNodes: VpnNode[]): void {
+  try {
+    const customOnly = allNodes.filter((n) => n.source !== 'demo');
+    localStorage.setItem(CUSTOM_NODES_KEY, JSON.stringify(customOnly));
+  } catch {
+    // ignore storage quota errors
+  }
+}
+
+function saveSubscriptions(subs: SubscriptionProfile[]): void {
+  try {
+    localStorage.setItem(SUBS_KEY, JSON.stringify(subs));
+  } catch {
+    // ignore
+  }
+}
 
 export const App: React.FC = () => {
   const [nodes, setNodes] = useState<VpnNode[]>(() => {
     try {
-      const saved = localStorage.getItem('veil_custom_nodes');
+      const saved = localStorage.getItem(CUSTOM_NODES_KEY);
       if (saved) {
         const parsed = JSON.parse(saved) as VpnNode[];
         if (Array.isArray(parsed) && parsed.length > 0) {
@@ -47,6 +68,22 @@ export const App: React.FC = () => {
     }
     return DEFAULT_DEMO_NODES;
   });
+
+  const [subscriptions, setSubscriptions] = useState<SubscriptionProfile[]>(() => {
+    try {
+      const saved = localStorage.getItem(SUBS_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved) as SubscriptionProfile[];
+        if (Array.isArray(parsed)) return parsed;
+      }
+    } catch {
+      // fallback
+    }
+    return [];
+  });
+
+  const [refreshingSubId, setRefreshingSubId] = useState<string | null>(null);
+  const [refreshingAllSubs, setRefreshingAllSubs] = useState(false);
 
   const [tab, setTab] = useState<NavTab>('overview');
   const [projection, setProjection] = useState<MapProjection>('globe');
@@ -60,6 +97,7 @@ export const App: React.FC = () => {
   const [ipMasked, setIpMasked] = useState(false);
   const [soundEnabled, setSoundEnabled] = useState(true);
   const [lightMode, setLightMode] = useState(false);
+  const [autoStart, setAutoStart] = useState(false);
   const [cmdkOpen, setCmdkOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
@@ -88,6 +126,15 @@ export const App: React.FC = () => {
     engineMode: 'demo'
   });
 
+  const [updateState, setUpdateState] = useState<UpdateState>({
+    status: 'idle',
+    currentVersion: '1.0.0',
+    latestVersion: null,
+    releaseUrl: 'https://github.com/ayyub11289/newvpn/releases',
+    progress: 0,
+    message: '点击检查 GitHub Releases 新版本'
+  });
+
   const [auditItems, setAuditItems] = useState<LeakAuditItem[]>([
     { id: 'dns', title: 'DNS 隧道内解析校验', detail: '连接隧道后自动校验 DoH 解析通道', status: 'idle', badge: '未连接' },
     { id: 'webrtc', title: 'WebRTC 真实内网探测拦截', detail: '校验 STUN 候选地址屏蔽状态', status: 'idle', badge: '未连接' },
@@ -105,7 +152,10 @@ export const App: React.FC = () => {
   }, []);
 
   const activeNode = useMemo(() => nodes.find((n) => n.id === activeNodeId) || nodes[0], [nodes, activeNodeId]);
-  const entryNode = useMemo(() => nodes.find((n) => n.id === entryNodeId) || nodes[Math.min(6, nodes.length - 1)], [nodes, entryNodeId]);
+  const entryNode = useMemo(
+    () => nodes.find((n) => n.id === entryNodeId) || nodes[Math.min(6, nodes.length - 1)],
+    [nodes, entryNodeId]
+  );
 
   const getEffectivePing = useCallback(
     (node: VpnNode) => {
@@ -115,13 +165,11 @@ export const App: React.FC = () => {
     [multiHop, entryNode]
   );
 
-  // Sync light/dark theme class on <html>
   useEffect(() => {
     document.documentElement.classList.toggle('light', lightMode);
     document.documentElement.classList.toggle('dark', !lightMode);
   }, [lightMode]);
 
-  // Cursor-tracking spotlight on all .spotlight-card panels
   useEffect(() => {
     const onMove = (e: PointerEvent) => {
       const card = (e.target as HTMLElement | null)?.closest('.spotlight-card') as HTMLElement | null;
@@ -134,22 +182,40 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('pointermove', onMove);
   }, []);
 
-  // Refresh Electron capabilities
   const refreshCapabilities = useCallback(async () => {
     if (!window.veilAPI) return;
-    const cap = await window.veilAPI.getCapabilities();
+    const [cap, auto, upd] = await Promise.all([
+      window.veilAPI.getCapabilities(),
+      window.veilAPI.getAutoStart(),
+      window.veilAPI.getUpdateState()
+    ]);
     setCapabilities(cap);
+    setAutoStart(auto);
+    setUpdateState(upd);
   }, []);
 
   useEffect(() => {
     void refreshCapabilities();
   }, [refreshCapabilities]);
 
-  // Subscribe to Electron Main Process telemetry stream
+  // Listen to Electron auto-updater events
+  useEffect(() => {
+    if (!window.veilAPI) return;
+    return window.veilAPI.onUpdateState((next) => {
+      setUpdateState(next);
+      if (next.status === 'available' && next.latestVersion) {
+        showToast(`发现 VEIL VPN 新版本 v${next.latestVersion}，可在「链路诊断」一键升级`);
+      } else if (next.status === 'downloaded') {
+        soundEngine.playConnected();
+        showToast('新版本下载完成，点击「重启并安装」即可升级');
+      }
+    });
+  }, [showToast]);
+
   const prevStatusRef = useRef<TunnelStatus>('disconnected');
   useEffect(() => {
     if (!window.veilAPI) return;
-    const unsub = window.veilAPI.onTelemetry((snap) => {
+    return window.veilAPI.onTelemetry((snap) => {
       if (snap.status === 'connected' && prevStatusRef.current !== 'connected') {
         soundEngine.playConnected();
         setKeyIdx((k) => k + 1);
@@ -179,7 +245,6 @@ export const App: React.FC = () => {
         showToast(`内核提示: ${snap.error}`);
       }
     });
-    return unsub;
   }, [handshakeStep, showToast]);
 
   const connectWithNode = useCallback(
@@ -210,7 +275,6 @@ export const App: React.FC = () => {
           splitApps
         });
       } else {
-        // Fallback when opened in plain Vite browser without Electron
         setStatus('connected');
         setActiveIp(targetNode.ip);
         soundEngine.playConnected();
@@ -283,29 +347,137 @@ export const App: React.FC = () => {
     showToast('节点实测延迟已刷新 ✓');
   }, [nodes, showToast]);
 
-  const handleImported = useCallback(
+  const mergeSubNodes = useCallback((subId: string, incoming: VpnNode[]) => {
+    const tagged = incoming.map((n, idx) => ({ ...n, id: `${subId}::${idx}::${n.id}` }));
+    setNodes((prev) => {
+      const kept = prev.filter((n) => !n.id.startsWith(`${subId}::`));
+      const merged = [...tagged, ...kept];
+      saveCustomNodes(merged);
+      return merged;
+    });
+    if (tagged[0]) setActiveNodeId(tagged[0].id);
+  }, []);
+
+  const handleImportedUrl = useCallback(
+    (url: string, name: string, imported: VpnNode[], msg: string) => {
+      soundEngine.playConnected();
+      const existing = subscriptions.find((s) => s.url === url);
+      const subId = existing ? existing.id : `sub_${Date.now().toString(36)}`;
+      const nowStr = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+      const nextSub: SubscriptionProfile = {
+        id: subId,
+        name,
+        url,
+        nodeCount: imported.length,
+        updatedAt: nowStr
+      };
+      setSubscriptions((prev) => {
+        const next = [nextSub, ...prev.filter((s) => s.id !== subId)];
+        saveSubscriptions(next);
+        return next;
+      });
+      mergeSubNodes(subId, imported);
+      void refreshCapabilities();
+      showToast(msg);
+    },
+    [subscriptions, mergeSubNodes, refreshCapabilities, showToast]
+  );
+
+  const handleImportedText = useCallback(
     (imported: VpnNode[], msg: string) => {
       soundEngine.playConnected();
       setNodes((prev) => {
         const merged = [...imported, ...prev];
-        const customOnly = merged.filter((n) => n.source !== 'demo');
-        try {
-          localStorage.setItem('veil_custom_nodes', JSON.stringify(customOnly));
-        } catch {
-          // ignore
-        }
+        saveCustomNodes(merged);
         return merged;
       });
-      if (imported[0]) {
-        setActiveNodeId(imported[0].id);
-      }
+      if (imported[0]) setActiveNodeId(imported[0].id);
       void refreshCapabilities();
       showToast(msg);
     },
     [refreshCapabilities, showToast]
   );
 
-  // Global Ctrl/Cmd + K listener
+  const handleRefreshSub = useCallback(
+    async (sub: SubscriptionProfile) => {
+      if (!window.veilAPI) return;
+      setRefreshingSubId(sub.id);
+      soundEngine.playTick(960);
+      try {
+        const res = await window.veilAPI.importFromUrl(sub.url);
+        if (res.ok) {
+          const nowStr = new Date().toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+          setSubscriptions((prev) => {
+            const next = prev.map((s) =>
+              s.id === sub.id ? { ...s, nodeCount: res.nodes.length, updatedAt: nowStr } : s
+            );
+            saveSubscriptions(next);
+            return next;
+          });
+          mergeSubNodes(sub.id, res.nodes);
+          soundEngine.playConnected();
+          showToast(`已刷新「${sub.name}」(${res.nodes.length} 个节点)`);
+        } else {
+          showToast(res.message);
+        }
+      } finally {
+        setRefreshingSubId(null);
+      }
+    },
+    [mergeSubNodes, showToast]
+  );
+
+  const handleRefreshAllSubs = useCallback(async () => {
+    if (!window.veilAPI || subscriptions.length === 0) return;
+    setRefreshingAllSubs(true);
+    soundEngine.playTick(980);
+    try {
+      for (const sub of subscriptions) {
+        await handleRefreshSub(sub);
+      }
+    } finally {
+      setRefreshingAllSubs(false);
+    }
+  }, [subscriptions, handleRefreshSub]);
+
+  const handleRemoveSub = useCallback(
+    (id: string) => {
+      soundEngine.playTick(760);
+      setSubscriptions((prev) => {
+        const next = prev.filter((s) => s.id !== id);
+        saveSubscriptions(next);
+        return next;
+      });
+      setNodes((prev) => {
+        const kept = prev.filter((n) => !n.id.startsWith(`${id}::`));
+        saveCustomNodes(kept);
+        return kept;
+      });
+      showToast('已删除该订阅及其关联节点');
+    },
+    [showToast]
+  );
+
+  const handleToggleAutoStart = useCallback(async () => {
+    soundEngine.playTick(900);
+    const next = !autoStart;
+    if (window.veilAPI) {
+      const actual = await window.veilAPI.setAutoStart(next);
+      setAutoStart(actual);
+      showToast(actual ? '已开启 Windows 11 开机静默自启动' : '已关闭开机自启动');
+    } else {
+      setAutoStart(next);
+    }
+  }, [autoStart, showToast]);
+
+  const handleCheckUpdates = useCallback(async () => {
+    soundEngine.playTick(940);
+    if (!window.veilAPI) return;
+    const st = await window.veilAPI.checkForUpdates();
+    setUpdateState(st);
+    showToast(st.message);
+  }, [showToast]);
+
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
@@ -328,9 +500,24 @@ export const App: React.FC = () => {
       },
       {
         id: 'open-import',
-        label: '导入订阅链接或 WireGuard .conf 配置',
+        label: '订阅管理 / 导入 WireGuard .conf 配置',
         hint: 'Import',
         run: () => setImportOpen(true)
+      },
+      {
+        id: 'refresh-subs',
+        label: `一键刷新全部已保存订阅 (${subscriptions.length})`,
+        hint: 'Sync Nodes',
+        run: () => void handleRefreshAllSubs()
+      },
+      {
+        id: 'check-update',
+        label: '检查 VEIL 客户端 GitHub Releases 新版本',
+        hint: `v${updateState.currentVersion}`,
+        run: () => {
+          setTab('diagnostics');
+          void handleCheckUpdates();
+        }
       },
       {
         id: 'toggle-mh',
@@ -366,7 +553,19 @@ export const App: React.FC = () => {
         }
       }
     ],
-    [status, multiHop, projection, handleToggleConnect, handleRunAudit, handleCopyProxyEnv, showToast]
+    [
+      status,
+      subscriptions.length,
+      updateState.currentVersion,
+      multiHop,
+      projection,
+      handleToggleConnect,
+      handleRefreshAllSubs,
+      handleCheckUpdates,
+      handleRunAudit,
+      handleCopyProxyEnv,
+      showToast
+    ]
   );
 
   return (
@@ -443,159 +642,168 @@ export const App: React.FC = () => {
       <div className="relative z-10 flex-1 min-h-0 overflow-y-auto px-3 md:px-4 pt-1.5 pb-4">
         <div className="max-w-7xl mx-auto flex flex-col gap-3.5">
           {tab === 'overview' && (
-          <main className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 items-stretch">
-            <PowerDial
+            <main className="grid grid-cols-1 lg:grid-cols-12 gap-3.5 items-stretch">
+              <PowerDial
+                status={status}
+                handshakeStep={handshakeStep}
+                uptimeSeconds={uptimeSeconds}
+                keyHash={KEY_HASHES[keyIdx % KEY_HASHES.length]}
+                keyRotateSeconds={keyRotateSeconds}
+                activeNode={activeNode}
+                entryNode={entryNode}
+                entryCandidates={nodes.slice(0, 10)}
+                effectivePing={getEffectivePing(activeNode)}
+                protocol={protocol}
+                takeoverMode={takeoverMode}
+                multiHop={multiHop}
+                blockedCount={blockedCount}
+                capabilities={capabilities}
+                onToggleConnect={() => void handleToggleConnect()}
+                onChangeProtocol={(p) => {
+                  soundEngine.playTick(900);
+                  setProtocol(p);
+                  if (status === 'connected') void connectWithNode(activeNode, { protocol: p });
+                }}
+                onChangeTakeover={(m) => {
+                  soundEngine.playTick(920);
+                  setTakeoverMode(m);
+                  if (status === 'connected') void connectWithNode(activeNode, { takeoverMode: m });
+                }}
+                onToggleMultiHop={() => {
+                  soundEngine.playTick(880);
+                  const next = !multiHop;
+                  setMultiHop(next);
+                  if (status === 'connected') void connectWithNode(activeNode, { multiHop: next });
+                }}
+                onChangeEntryNode={(id) => {
+                  soundEngine.playTick(880);
+                  setEntryNodeId(id);
+                }}
+                onOpenNodes={() => {
+                  soundEngine.playTick(880);
+                  setTab('nodes');
+                }}
+                onOpenDiagnostics={() => {
+                  soundEngine.playTick(920);
+                  setTab('diagnostics');
+                  void handleRunAudit();
+                }}
+                onRelaunchAdmin={() => {
+                  void window.veilAPI?.relaunchElevated();
+                }}
+              />
+
+              <section className="lg:col-span-8 flex flex-col gap-3.5">
+                <SpatialGlobe
+                  nodes={nodes}
+                  activeNode={activeNode}
+                  entryNode={entryNode}
+                  multiHop={multiHop}
+                  status={status}
+                  projection={projection}
+                  lightMode={lightMode}
+                  onChangeProjection={(p) => {
+                    soundEngine.playTick(940);
+                    setProjection(p);
+                  }}
+                  onSelectNode={handleSelectNode}
+                  getEffectivePing={getEffectivePing}
+                />
+
+                <TelemetrySpline
+                  downHistory={downHistory}
+                  upHistory={upHistory}
+                  downSpeed={downSpeed}
+                  upSpeed={upSpeed}
+                  totalGB={totalGB}
+                  effectivePing={getEffectivePing(activeNode)}
+                  status={status}
+                  lightMode={lightMode}
+                  onTriggerBurst={() => {
+                    soundEngine.playTick(980);
+                    if (status !== 'connected') {
+                      void connectWithNode(activeNode);
+                    } else {
+                      void window.veilAPI?.triggerBurst();
+                      showToast('正在执行加密隧道峰值吞吐压测...');
+                    }
+                  }}
+                />
+              </section>
+            </main>
+          )}
+
+          {tab === 'nodes' && (
+            <NodesView
+              nodes={nodes}
+              activeNodeId={activeNode.id}
               status={status}
-              handshakeStep={handshakeStep}
-              uptimeSeconds={uptimeSeconds}
-              keyHash={KEY_HASHES[keyIdx % KEY_HASHES.length]}
-              keyRotateSeconds={keyRotateSeconds}
-              activeNode={activeNode}
-              entryNode={entryNode}
-              entryCandidates={nodes.slice(0, 10)}
-              effectivePing={getEffectivePing(activeNode)}
+              subscriptionCount={subscriptions.length}
+              refreshingAllSubs={refreshingAllSubs}
+              onSelectNode={handleSelectNode}
+              onToggleFav={(id) => {
+                soundEngine.playTick(1040);
+                setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, fav: !n.fav } : n)));
+              }}
+              onPingAll={() => void handlePingAll()}
+              onRefreshAllSubs={() => void handleRefreshAllSubs()}
+              onOpenImport={() => setImportOpen(true)}
+              getEffectivePing={getEffectivePing}
+            />
+          )}
+
+          {tab === 'security' && (
+            <SecurityView
+              autopilot={autopilot}
+              security={security}
+              splitApps={splitApps}
+              wifiSsid={wifiSsid}
+              autoStart={autoStart}
+              onToggleAutoStart={() => void handleToggleAutoStart()}
+              onToggleAutoPilot={(id) => {
+                soundEngine.playTick(920);
+                setAutopilot((prev) => prev.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r)));
+              }}
+              onToggleSecurity={(id) => {
+                soundEngine.playTick(860);
+                setSecurity((prev) => prev.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s)));
+              }}
+              onToggleSplitApp={(id) => {
+                soundEngine.playTick(780);
+                setSplitApps((prev) =>
+                  prev.map((a) => (a.id === id ? { ...a, mode: a.mode === 'proxy' ? 'bypass' : 'proxy' } : a))
+                );
+              }}
+              onSimulateWifi={() => {
+                setTab('overview');
+                showToast('检测到未加密热点 "Airport_Free_WiFi"，Auto-Pilot 已自动接管加密隧道');
+                void connectWithNode(activeNode);
+              }}
+            />
+          )}
+
+          {tab === 'diagnostics' && (
+            <DiagnosticsView
+              status={status}
               protocol={protocol}
               takeoverMode={takeoverMode}
               multiHop={multiHop}
-              blockedCount={blockedCount}
+              activeNode={activeNode}
+              entryNode={entryNode}
+              effectivePing={getEffectivePing(activeNode)}
+              activeIp={activeIp}
               capabilities={capabilities}
-              onToggleConnect={() => void handleToggleConnect()}
-              onChangeProtocol={(p) => {
-                soundEngine.playTick(900);
-                setProtocol(p);
-                if (status === 'connected') void connectWithNode(activeNode, { protocol: p });
-              }}
-              onChangeTakeover={(m) => {
-                soundEngine.playTick(920);
-                setTakeoverMode(m);
-                if (status === 'connected') void connectWithNode(activeNode, { takeoverMode: m });
-              }}
-              onToggleMultiHop={() => {
-                soundEngine.playTick(880);
-                const next = !multiHop;
-                setMultiHop(next);
-                if (status === 'connected') void connectWithNode(activeNode, { multiHop: next });
-              }}
-              onChangeEntryNode={(id) => {
-                soundEngine.playTick(880);
-                setEntryNodeId(id);
-              }}
-              onOpenNodes={() => {
-                soundEngine.playTick(880);
-                setTab('nodes');
-              }}
-              onOpenDiagnostics={() => {
-                soundEngine.playTick(920);
-                setTab('diagnostics');
-                void handleRunAudit();
-              }}
-              onRelaunchAdmin={() => {
-                void window.veilAPI?.relaunchElevated();
-              }}
+              auditItems={auditItems}
+              auditLoading={auditLoading}
+              updateState={updateState}
+              onRunAudit={() => void handleRunAudit()}
+              onCheckUpdates={() => void handleCheckUpdates()}
+              onDownloadUpdate={() => void window.veilAPI?.downloadUpdate()}
+              onInstallUpdate={() => void window.veilAPI?.installUpdate()}
+              onCopyProxyEnv={handleCopyProxyEnv}
+              onOpenBinFolder={() => void window.veilAPI?.openBinFolder()}
             />
-
-            <section className="lg:col-span-8 flex flex-col gap-3.5">
-              <SpatialGlobe
-                nodes={nodes}
-                activeNode={activeNode}
-                entryNode={entryNode}
-                multiHop={multiHop}
-                status={status}
-                projection={projection}
-                lightMode={lightMode}
-                onChangeProjection={(p) => {
-                  soundEngine.playTick(940);
-                  setProjection(p);
-                }}
-                onSelectNode={handleSelectNode}
-                getEffectivePing={getEffectivePing}
-              />
-
-              <TelemetrySpline
-                downHistory={downHistory}
-                upHistory={upHistory}
-                downSpeed={downSpeed}
-                upSpeed={upSpeed}
-                totalGB={totalGB}
-                effectivePing={getEffectivePing(activeNode)}
-                status={status}
-                lightMode={lightMode}
-                onTriggerBurst={() => {
-                  soundEngine.playTick(980);
-                  if (status !== 'connected') {
-                    void connectWithNode(activeNode);
-                  } else {
-                    void window.veilAPI?.triggerBurst();
-                    showToast('正在执行加密隧道峰值吞吐压测...');
-                  }
-                }}
-              />
-            </section>
-          </main>
-        )}
-
-        {tab === 'nodes' && (
-          <NodesView
-            nodes={nodes}
-            activeNodeId={activeNode.id}
-            status={status}
-            onSelectNode={handleSelectNode}
-            onToggleFav={(id) => {
-              soundEngine.playTick(1040);
-              setNodes((prev) => prev.map((n) => (n.id === id ? { ...n, fav: !n.fav } : n)));
-            }}
-            onPingAll={() => void handlePingAll()}
-            onOpenImport={() => setImportOpen(true)}
-            getEffectivePing={getEffectivePing}
-          />
-        )}
-
-        {tab === 'security' && (
-          <SecurityView
-            autopilot={autopilot}
-            security={security}
-            splitApps={splitApps}
-            wifiSsid={wifiSsid}
-            onToggleAutoPilot={(id) => {
-              soundEngine.playTick(920);
-              setAutopilot((prev) => prev.map((r) => (r.id === id ? { ...r, enabled: !r.enabled } : r)));
-            }}
-            onToggleSecurity={(id) => {
-              soundEngine.playTick(860);
-              setSecurity((prev) => prev.map((s) => (s.id === id ? { ...s, enabled: !s.enabled } : s)));
-            }}
-            onToggleSplitApp={(id) => {
-              soundEngine.playTick(780);
-              setSplitApps((prev) =>
-                prev.map((a) => (a.id === id ? { ...a, mode: a.mode === 'proxy' ? 'bypass' : 'proxy' } : a))
-              );
-            }}
-            onSimulateWifi={() => {
-              setTab('overview');
-              showToast('检测到未加密热点 "Airport_Free_WiFi"，Auto-Pilot 已自动接管加密隧道');
-              void connectWithNode(activeNode);
-            }}
-          />
-        )}
-
-        {tab === 'diagnostics' && (
-          <DiagnosticsView
-            status={status}
-            protocol={protocol}
-            takeoverMode={takeoverMode}
-            multiHop={multiHop}
-            activeNode={activeNode}
-            entryNode={entryNode}
-            effectivePing={getEffectivePing(activeNode)}
-            activeIp={activeIp}
-            capabilities={capabilities}
-            auditItems={auditItems}
-            auditLoading={auditLoading}
-            onRunAudit={() => void handleRunAudit()}
-            onCopyProxyEnv={handleCopyProxyEnv}
-            onOpenBinFolder={() => void window.veilAPI?.openBinFolder()}
-          />
-        )}
+          )}
         </div>
       </div>
 
@@ -612,7 +820,12 @@ export const App: React.FC = () => {
         open={importOpen}
         onClose={() => setImportOpen(false)}
         capabilities={capabilities}
-        onImported={handleImported}
+        subscriptions={subscriptions}
+        refreshingSubId={refreshingSubId}
+        onImportedUrl={handleImportedUrl}
+        onImportedText={handleImportedText}
+        onRefreshSub={(sub) => void handleRefreshSub(sub)}
+        onRemoveSub={handleRemoveSub}
         onOpenBinFolder={() => void window.veilAPI?.openBinFolder()}
       />
 

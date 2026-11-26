@@ -5,9 +5,12 @@ interface NodesViewProps {
   nodes: VpnNode[];
   activeNodeId: string;
   status: TunnelStatus;
+  subscriptionCount: number;
+  refreshingAllSubs: boolean;
   onSelectNode: (id: string) => void;
   onToggleFav: (id: string) => void;
   onPingAll: () => void;
+  onRefreshAllSubs: () => void;
   onOpenImport: () => void;
   getEffectivePing: (n: VpnNode) => number;
 }
@@ -16,9 +19,12 @@ export const NodesView: React.FC<NodesViewProps> = ({
   nodes,
   activeNodeId,
   status,
+  subscriptionCount,
+  refreshingAllSubs,
   onSelectNode,
   onToggleFav,
   onPingAll,
+  onRefreshAllSubs,
   onOpenImport,
   getEffectivePing
 }) => {
@@ -66,7 +72,17 @@ export const NodesView: React.FC<NodesViewProps> = ({
             ))}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            {subscriptionCount > 0 && (
+              <button
+                type="button"
+                disabled={refreshingAllSubs}
+                onClick={onRefreshAllSubs}
+                className="px-3 py-1.5 rounded-xl glass-well text-xs font-medium hover:opacity-90 disabled:opacity-50 transition cursor-pointer"
+              >
+                {refreshingAllSubs ? '同步订阅中...' : `刷新订阅 (${subscriptionCount})`}
+              </button>
+            )}
             <button
               type="button"
               onClick={onPingAll}

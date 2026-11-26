@@ -6,13 +6,21 @@ directories:
 files:
   - dist/**/*
   - dist-electron/**/*
+  - resources/icon.ico
   - package.json
 extraResources:
   - from: resources/bin
     to: bin
     filter:
       - "**/*"
+publish:
+  provider: github
+  owner: ayyub11289
+  repo: newvpn
+  releaseType: release
 win:
+  icon: resources/icon.ico
+  artifactName: VEIL-VPN-${version}-win-${arch}-${target}.${ext}
   target:
     - target: nsis
       arch:
@@ -27,3 +35,5 @@ nsis:
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: VEIL VPN
+  installerIcon: resources/icon.ico
+  uninstallerIcon: resources/icon.ico

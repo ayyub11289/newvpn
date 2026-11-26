@@ -1,5 +1,5 @@
 import React from 'react';
-import { CoreCapabilities, LeakAuditItem, ProtocolMode, TakeoverMode, TunnelStatus, VpnNode } from '../types';
+import { CoreCapabilities, LeakAuditItem, ProtocolMode, TakeoverMode, TunnelStatus, UpdateState, VpnNode } from '../types';
 
 interface DiagnosticsViewProps {
   status: TunnelStatus;
@@ -13,7 +13,11 @@ interface DiagnosticsViewProps {
   capabilities: CoreCapabilities;
   auditItems: LeakAuditItem[];
   auditLoading: boolean;
+  updateState: UpdateState;
   onRunAudit: () => void;
+  onCheckUpdates: () => void;
+  onDownloadUpdate: () => void;
+  onInstallUpdate: () => void;
   onCopyProxyEnv: () => void;
   onOpenBinFolder: () => void;
 }
@@ -30,7 +34,11 @@ export const DiagnosticsView: React.FC<DiagnosticsViewProps> = ({
   capabilities,
   auditItems,
   auditLoading,
+  updateState,
   onRunAudit,
+  onCheckUpdates,
+  onDownloadUpdate,
+  onInstallUpdate,
   onCopyProxyEnv,
   onOpenBinFolder
 }) => {
@@ -164,6 +172,59 @@ export const DiagnosticsView: React.FC<DiagnosticsViewProps> = ({
               </div>
             );
           })}
+        </div>
+
+        {/* Software Auto-Update Panel */}
+        <div className="relative z-10 mt-auto pt-3 border-t border-[var(--card-border)] flex flex-col gap-2.5">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-semibold">客户端在线更新 · GitHub Releases</div>
+              <p className="text-xs text-[var(--muted-foreground)] mt-0.5">
+                当前 v{updateState.currentVersion} · {updateState.message}
+              </p>
+            </div>
+            <div className="flex items-center gap-1.5 shrink-0">
+              {updateState.status === 'downloaded' ? (
+                <button
+                  type="button"
+                  onClick={onInstallUpdate}
+                  className="px-3 py-1.5 rounded-xl bg-[var(--success)] text-white text-xs font-semibold hover:opacity-90 cursor-pointer"
+                >
+                  重启并安装
+                </button>
+              ) : updateState.status === 'available' ? (
+                <button
+                  type="button"
+                  onClick={onDownloadUpdate}
+                  className="px-3 py-1.5 rounded-xl bg-[var(--primary)] text-[var(--primary-foreground)] text-xs font-semibold hover:opacity-90 cursor-pointer"
+                >
+                  立即更新 v{updateState.latestVersion}
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  disabled={updateState.status === 'checking' || updateState.status === 'downloading'}
+                  onClick={onCheckUpdates}
+                  className="px-3 py-1.5 rounded-xl glass-well text-xs font-medium hover:opacity-90 disabled:opacity-50 cursor-pointer"
+                >
+                  {updateState.status === 'checking'
+                    ? '检查中...'
+                    : updateState.status === 'downloading'
+                    ? `下载 ${updateState.progress}%`
+                    : '检查更新'}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {updateState.status === 'downloading' && (
+            <div className="w-full h-1.5 rounded-full bg-[var(--border)] overflow-hidden">
+              <div
+                className="h-full rounded-full transition-all"
+                style={{ width: `${updateState.progress}%`, background: 'var(--primary)' }}
+              />
+            </div>
+          )}
         </div>
       </section>
     </main>
