@@ -70,7 +70,16 @@ function addNodeToConfig(
  * - TUN `address: [...]` array instead of removed `inet4_address`
  * - WireGuard placed in top-level `endpoints` instead of removed `wireguard` outbound
  */
-export function buildSingBoxConfig(req: ConnectRequest): Record<string, unknown> {
+export interface RuntimePorts {
+  mixedPort: number;
+  socksPort: number;
+  clashApiPort: number;
+}
+
+export function buildSingBoxConfig(
+  req: ConnectRequest,
+  ports: RuntimePorts = { mixedPort: MIXED_PROXY_PORT, socksPort: SOCKS_PROXY_PORT, clashApiPort: CLASH_API_PORT }
+): Record<string, unknown> {
   const killSwitch = req.security.find((s) => s.id === 'killswitch')?.enabled ?? true;
   const netShield = req.security.find((s) => s.id === 'netshield')?.enabled ?? true;
   const lanBypass = req.security.find((s) => s.id === 'lan')?.enabled ?? true;
@@ -82,13 +91,13 @@ export function buildSingBoxConfig(req: ConnectRequest): Record<string, unknown>
       type: 'mixed',
       tag: 'mixed-in',
       listen: '127.0.0.1',
-      listen_port: MIXED_PROXY_PORT
+      listen_port: ports.mixedPort
     },
     {
       type: 'socks',
       tag: 'socks-in',
       listen: '127.0.0.1',
-      listen_port: SOCKS_PROXY_PORT
+      listen_port: ports.socksPort
     }
   ];
 
@@ -206,7 +215,7 @@ export function buildSingBoxConfig(req: ConnectRequest): Record<string, unknown>
     },
     experimental: {
       clash_api: {
-        external_controller: `127.0.0.1:${CLASH_API_PORT}`,
+        external_controller: `127.0.0.1:${ports.clashApiPort}`,
         secret: ''
       }
     }

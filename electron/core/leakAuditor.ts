@@ -112,6 +112,8 @@ export async function runRealLeakAudit(opts: {
   takeoverMode: TakeoverMode;
   netShieldEnabled: boolean;
   killSwitchEnabled: boolean;
+  mixedPort?: number;
+  clashApiPort?: number;
 }): Promise<LeakAuditItem[]> {
   if (!opts.connected) {
     return [
@@ -191,10 +193,12 @@ export async function runRealLeakAudit(opts: {
   }
 
   // Live Core Mode: run genuine local probes and report exact verified facts
+  const pMixed = opts.mixedPort ?? MIXED_PROXY_PORT;
+  const pApi = opts.clashApiPort ?? CLASH_API_PORT;
   const [proxyPing, apiPing, exitIp, sysDns] = await Promise.all([
-    measureTcpPing('127.0.0.1', MIXED_PROXY_PORT, 1000),
-    measureTcpPing('127.0.0.1', CLASH_API_PORT, 1000),
-    probeExitIpViaProxy(MIXED_PROXY_PORT, 4500),
+    measureTcpPing('127.0.0.1', pMixed, 1000),
+    measureTcpPing('127.0.0.1', pApi, 1000),
+    probeExitIpViaProxy(pMixed, 4500),
     inspectWindowsDnsServers()
   ]);
 
@@ -203,7 +207,7 @@ export async function runRealLeakAudit(opts: {
   return [
     {
       id: 'tunnel-probe',
-      title: '隧道端到端出口 IP 实测 (经 127.0.0.1:7890)',
+      title: `隧道端到端出口 IP 实测 (经 127.0.0.1:${pMixed})`,
       detail: exitIp
         ? `已通过本地加密代理实际连通 Cloudflare Trace，实测出口 IP: ${exitIp}`
         : proxyReady

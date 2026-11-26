@@ -12,30 +12,53 @@ interface ProxySnapshot {
   appliedByVeil: boolean;
 }
 
-const REG_KEY = 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
+const REG_PATH = 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings';
 
-async function runPs(script: string): Promise<string> {
-  const { stdout } = await execFileAsync(
+async function regQueryValue(valueName: string): Promise<string> {
+  try {
+    const { stdout } = await execFileAsync('reg.exe', ['query', REG_PATH, '/v', valueName], {
+      windowsHide: true,
+      timeout: 3000
+    });
+    const line = stdout
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .find((l) => l.toLowerCase().startsWith(valueName.toLowerCase()));
+    if (!line) return '';
+    const match = line.match(/REG_\w+\s+(.*)$/i);
+    return match ? match[1].trim() : '';
+  } catch {
+    return '';
+  }
+}
+
+async function regAdd(valueName: string, type: 'REG_DWORD' | 'REG_SZ', data: string): Promise<void> {
+  await execFileAsync('reg.exe', ['add', REG_PATH, '/v', valueName, '/t', type, '/d', data, '/f'], {
+    windowsHide: true,
+    timeout: 4000
+  });
+}
+
+/**
+ * Best-effort WinINet broadcast so running browsers pick up the proxy immediately.
+ * Runs asynchronously and NEVER throws or blocks connection startup.
+ */
+function notifyWinInetAsync(): void {
+  if (process.platform !== 'win32') return;
+  const script = [
+    '$sig = "[DllImport(\\"wininet.dll\\")] public static extern bool InternetSetOption(IntPtr h, int o, IntPtr b, int l);";',
+    '$t = Add-Type -MemberDefinition $sig -Name WinInetNotify -Namespace Veil -PassThru -ErrorAction SilentlyContinue;',
+    'if ($t) { $t::InternetSetOption([IntPtr]::Zero, 39, [IntPtr]::Zero, 0) | Out-Null; $t::InternetSetOption([IntPtr]::Zero, 37, [IntPtr]::Zero, 0) | Out-Null; }'
+  ].join(' ');
+  execFile(
     'powershell.exe',
     ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-Command', script],
-    { windowsHide: true, timeout: 8000 }
+    { windowsHide: true, timeout: 20000 },
+    () => {
+      // Non-fatal best-effort broadcast
+    }
   );
-  return stdout.trim();
 }
-
-const REFRESH_WININET_PS = `
-$code = @"
-using System;
-using System.Runtime.InteropServices;
-public class WinInet {
-  [DllImport("wininet.dll", SetLastError = true)]
-  public static extern bool InternetSetOption(IntPtr hInternet, int dwOption, IntPtr lpBuffer, int dwBufferLength);
-}
-"@
-Add-Type -TypeDefinition $code -ErrorAction SilentlyContinue
-[WinInet]::InternetSetOption([IntPtr]::Zero, 39, [IntPtr]::Zero, 0) | Out-Null
-[WinInet]::InternetSetOption([IntPtr]::Zero, 37, [IntPtr]::Zero, 0) | Out-Null
-`;
 
 export class WinProxyGuard {
   private backupFile: string;
@@ -71,21 +94,17 @@ export class WinProxyGuard {
   }
 
   private async readCurrentProxy(): Promise<ProxySnapshot> {
-    const script = `
-      $p = Get-ItemProperty -Path '${REG_KEY}' -ErrorAction SilentlyContinue
-      @{
-        proxyEnable = if ($null -ne $p.ProxyEnable) { [int]$p.ProxyEnable } else { 0 }
-        proxyServer = if ($null -ne $p.ProxyServer) { [string]$p.ProxyServer } else { '' }
-        proxyOverride = if ($null -ne $p.ProxyOverride) { [string]$p.ProxyOverride } else { '' }
-      } | ConvertTo-Json -Compress
-    `;
     try {
-      const raw = await runPs(script);
-      const parsed = JSON.parse(raw) as Partial<ProxySnapshot>;
+      const [enableRaw, server, override] = await Promise.all([
+        regQueryValue('ProxyEnable'),
+        regQueryValue('ProxyServer'),
+        regQueryValue('ProxyOverride')
+      ]);
+      const proxyEnable = enableRaw.startsWith('0x') ? parseInt(enableRaw, 16) : Number(enableRaw) || 0;
       return {
-        proxyEnable: Number(parsed.proxyEnable || 0),
-        proxyServer: String(parsed.proxyServer || ''),
-        proxyOverride: String(parsed.proxyOverride || ''),
+        proxyEnable: proxyEnable ? 1 : 0,
+        proxyServer: server,
+        proxyOverride: override,
         appliedByVeil: true
       };
     } catch {
@@ -101,13 +120,10 @@ export class WinProxyGuard {
     }
 
     const override = 'localhost;127.*;10.*;172.16.*;172.17.*;172.18.*;172.19.*;192.168.*;<local>';
-    const script = `
-      Set-ItemProperty -Path '${REG_KEY}' -Name ProxyEnable -Value 1
-      Set-ItemProperty -Path '${REG_KEY}' -Name ProxyServer -Value '127.0.0.1:${port}'
-      Set-ItemProperty -Path '${REG_KEY}' -Name ProxyOverride -Value '${override}'
-      ${REFRESH_WININET_PS}
-    `;
-    await runPs(script);
+    await regAdd('ProxyEnable', 'REG_DWORD', '1');
+    await regAdd('ProxyServer', 'REG_SZ', `127.0.0.1:${port}`);
+    await regAdd('ProxyOverride', 'REG_SZ', override);
+    notifyWinInetAsync();
     this.active = true;
   }
 
@@ -128,14 +144,9 @@ export class WinProxyGuard {
   }
 
   private async restoreFromSnapshot(snap: ProxySnapshot): Promise<void> {
-    const safeServer = snap.proxyServer.replace(/'/g, "''");
-    const safeOverride = snap.proxyOverride.replace(/'/g, "''");
-    const script = `
-      Set-ItemProperty -Path '${REG_KEY}' -Name ProxyEnable -Value ${snap.proxyEnable ? 1 : 0}
-      Set-ItemProperty -Path '${REG_KEY}' -Name ProxyServer -Value '${safeServer}'
-      Set-ItemProperty -Path '${REG_KEY}' -Name ProxyOverride -Value '${safeOverride}'
-      ${REFRESH_WININET_PS}
-    `;
-    await runPs(script);
+    await regAdd('ProxyEnable', 'REG_DWORD', snap.proxyEnable ? '1' : '0');
+    await regAdd('ProxyServer', 'REG_SZ', snap.proxyServer || '');
+    await regAdd('ProxyOverride', 'REG_SZ', snap.proxyOverride || '');
+    notifyWinInetAsync();
   }
 }

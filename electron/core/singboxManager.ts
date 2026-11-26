@@ -1,14 +1,40 @@
 import { ChildProcess, execFile, spawn } from 'node:child_process';
 import fs from 'node:fs';
+import net from 'node:net';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { ConnectRequest, CoreCapabilities, TelemetrySnapshot, TunnelStatus } from '../types';
-import { buildSingBoxConfig, CLASH_API_PORT, MIXED_PROXY_PORT } from './configBuilder';
+import { buildSingBoxConfig, CLASH_API_PORT, MIXED_PROXY_PORT, RuntimePorts, SOCKS_PROXY_PORT } from './configBuilder';
 import { measureTcpPing } from './leakAuditor';
 import { WinProxyGuard } from './winProxyGuard';
 import { inspectWindowsWifi } from './wifiWatcher';
 
 const execFileAsync = promisify(execFile);
+
+function isPortFree(port: number): Promise<boolean> {
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.once('error', () => resolve(false));
+    srv.once('listening', () => {
+      srv.close(() => resolve(true));
+    });
+    srv.listen(port, '127.0.0.1');
+  });
+}
+
+async function pickFreePort(preferred: number, fallbacks: number[]): Promise<number> {
+  for (const p of [preferred, ...fallbacks]) {
+    if (await isPortFree(p)) return p;
+  }
+  return new Promise((resolve) => {
+    const srv = net.createServer();
+    srv.listen(0, '127.0.0.1', () => {
+      const addr = srv.address();
+      const port = typeof addr === 'object' && addr ? addr.port : preferred;
+      srv.close(() => resolve(port));
+    });
+  });
+}
 
 export class SingBoxManager {
   private binDir: string;
@@ -31,6 +57,11 @@ export class SingBoxManager {
   private killSwitchEnabled = true;
   private killSwitchTripped = false;
   private lastError: string | undefined;
+  private activePorts: RuntimePorts = {
+    mixedPort: MIXED_PROXY_PORT,
+    socksPort: SOCKS_PROXY_PORT,
+    clashApiPort: CLASH_API_PORT
+  };
   private handshakeTimer: NodeJS.Timeout | null = null;
   private telemetryTimer: NodeJS.Timeout | null = null;
   private prevTrafficBytes = { down: 0, up: 0 };
@@ -69,6 +100,10 @@ export class SingBoxManager {
     } catch {
       // ignore cleanup errors
     }
+  }
+
+  getActivePorts(): RuntimePorts {
+    return this.activePorts;
   }
 
   async getCapabilities(): Promise<CoreCapabilities> {
@@ -135,12 +170,12 @@ export class SingBoxManager {
   /**
    * Waits until the spawned process is still alive AND 127.0.0.1:7890 is listening.
    */
-  private async waitForCoreReady(child: ChildProcess, mySession: number, maxWaitMs = 4500): Promise<boolean> {
+  private async waitForCoreReady(child: ChildProcess, mySession: number, port: number, maxWaitMs = 4500): Promise<boolean> {
     const start = Date.now();
     while (Date.now() - start < maxWaitMs) {
       if (mySession !== this.sessionId) return false;
       if (child.exitCode !== null || child.killed) return false;
-      const ping = await measureTcpPing('127.0.0.1', MIXED_PROXY_PORT, 350);
+      const ping = await measureTcpPing('127.0.0.1', port, 350);
       if (mySession !== this.sessionId) return false;
       if (child.exitCode !== null || child.killed) return false;
       if (ping >= 0) return true;
@@ -175,7 +210,13 @@ export class SingBoxManager {
     this.emit(0, 0);
 
     if (canRunLive) {
-      const cfgObj = buildSingBoxConfig(req);
+      const mixedPort = await pickFreePort(MIXED_PROXY_PORT, [17890, 27890, 37890]);
+      const socksPort = await pickFreePort(SOCKS_PROXY_PORT, [17891, 27891, 37891]);
+      const clashApiPort = await pickFreePort(CLASH_API_PORT, [19190, 19290, 19390]);
+      this.activePorts = { mixedPort, socksPort, clashApiPort };
+      if (mySession !== this.sessionId) return;
+
+      const cfgObj = buildSingBoxConfig(req, this.activePorts);
       const cfgPath = this.getTempConfigPath();
       fs.mkdirSync(this.userDataDir, { recursive: true });
       fs.writeFileSync(cfgPath, JSON.stringify(cfgObj, null, 2), 'utf8');
@@ -234,14 +275,14 @@ export class SingBoxManager {
       this.handshakeStep = 2;
       this.emit(0, 0);
 
-      const isReady = await this.waitForCoreReady(child, mySession, 4500);
+      const isReady = await this.waitForCoreReady(child, mySession, this.activePorts.mixedPort, 4500);
       if (mySession !== this.sessionId) return;
 
       if (!isReady) {
         await this.stopProcessOnly();
         this.cleanupTempConfig();
         this.status = 'disconnected';
-        this.lastError = stderrTail || 'sing-box 启动超时或提前退出，未监听本地代理端口';
+        this.lastError = stderrTail || `sing-box 启动超时或提前退出，未监听 127.0.0.1:${this.activePorts.mixedPort}`;
         await this.proxyGuard.disableSystemProxy();
         this.emit(0, 0);
         return;
@@ -249,7 +290,7 @@ export class SingBoxManager {
 
       try {
         if (req.takeoverMode === 'system-proxy') {
-          await this.proxyGuard.enableSystemProxy(MIXED_PROXY_PORT);
+          await this.proxyGuard.enableSystemProxy(this.activePorts.mixedPort);
         } else {
           await this.proxyGuard.disableSystemProxy();
         }
@@ -326,7 +367,7 @@ export class SingBoxManager {
     try {
       const controller = new AbortController();
       const timeout = setTimeout(() => controller.abort(), 650);
-      const res = await fetch(`http://127.0.0.1:${CLASH_API_PORT}/connections`, {
+      const res = await fetch(`http://127.0.0.1:${this.activePorts.clashApiPort}/connections`, {
         signal: controller.signal
       });
       clearTimeout(timeout);

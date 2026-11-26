@@ -58,6 +58,7 @@ export const App: React.FC = () => {
   const [lightMode, setLightMode] = useState(false);
   const [autoStart, setAutoStart] = useState(false);
   const [killSwitchTripped, setKillSwitchTripped] = useState(false);
+  const [lastError, setLastError] = useState<string | undefined>(undefined);
   const [cmdkOpen, setCmdkOpen] = useState(false);
   const [importOpen, setImportOpen] = useState(false);
 
@@ -263,9 +264,11 @@ export const App: React.FC = () => {
       }
       if (snap.error && snap.error !== lastErrorRef.current) {
         lastErrorRef.current = snap.error;
-        showToast(`内核提示: ${snap.error}`);
+        setLastError(snap.error);
+        showToast(`连接失败: ${snap.error}`);
       } else if (!snap.error) {
         lastErrorRef.current = undefined;
+        setLastError(undefined);
       }
     });
   }, [showToast]);
@@ -707,6 +710,7 @@ export const App: React.FC = () => {
                 multiHop={multiHop}
                 blockedCount={blockedCount}
                 capabilities={capabilities}
+                lastError={lastError}
                 onToggleConnect={() => void handleToggleConnect()}
                 onChangeProtocol={(p) => {
                   soundEngine.playTick(900);

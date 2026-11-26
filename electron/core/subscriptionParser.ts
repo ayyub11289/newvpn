@@ -280,7 +280,9 @@ function parseSingleUri(uri: string, idx: number): VpnNode | null {
 
     if (scheme === 'hysteria2' || scheme === 'hy2') {
       const sni = url.searchParams.get('sni') || host;
-      const insecure = url.searchParams.get('insecure') === '1';
+      const insecure = url.searchParams.get('insecure') === '1' || url.searchParams.get('insecure') === 'true';
+      const obfsType = url.searchParams.get('obfs');
+      const obfsPassword = url.searchParams.get('obfs-password') || url.searchParams.get('obfs_password');
       const outbound: Record<string, unknown> = {
         type: 'hysteria2',
         tag: 'proxy',
@@ -289,6 +291,9 @@ function parseSingleUri(uri: string, idx: number): VpnNode | null {
         password: decodeURIComponent(url.username),
         tls: { enabled: true, server_name: sni, insecure }
       };
+      if (obfsType && obfsPassword) {
+        outbound.obfs = { type: obfsType, password: decodeURIComponent(obfsPassword) };
+      }
       return {
         id: makeId('sub', idx, name),
         code: geo.code,
@@ -296,7 +301,7 @@ function parseSingleUri(uri: string, idx: number): VpnNode | null {
         city: name,
         host,
         port,
-        asn: 'Hysteria2 QUIC',
+        asn: obfsType ? `Hysteria2 (${obfsType})` : 'Hysteria2 QUIC',
         ip: host,
         lon: geo.lon,
         lat: geo.lat,
@@ -426,6 +431,9 @@ function parseClashYaml(raw: string): VpnNode[] {
         password: String(p.password || ''),
         tls: { enabled: true, server_name: String(p.sni || host), insecure: Boolean(p['skip-cert-verify']) }
       };
+      if (p.obfs && p['obfs-password']) {
+        outbound.obfs = { type: String(p.obfs), password: String(p['obfs-password']) };
+      }
     } else if (type === 'wireguard') {
       protocolType = 'wireguard';
       outbound = buildWireGuardEndpointSpec({
@@ -465,8 +473,123 @@ function parseClashYaml(raw: string): VpnNode[] {
   return nodes;
 }
 
+function parseCustomNodeJson(raw: string, label?: string): VpnNode[] {
+  try {
+    const obj = JSON.parse(raw) as Record<string, unknown>;
+    if (!obj || typeof obj !== 'object' || typeof obj.server !== 'string') return [];
+
+    const host = obj.server.trim();
+    const baseRemark = label || String(obj.remark || host);
+    const geo = matchGeoFromLabel(`${baseRemark} ${host}`);
+    const results: VpnNode[] = [];
+
+    // VLESS Reality multi-port block
+    if (typeof obj.uuid === 'string' && Array.isArray(obj.ports)) {
+      const sni = String(obj.sni || 'www.apple.com');
+      const fp = String(obj.fingerprint || 'chrome');
+      const pbk = typeof obj.publicKey === 'string' ? obj.publicKey : '';
+      const sid = typeof obj.shortId === 'string' ? obj.shortId : '';
+      const flow = typeof obj.flow === 'string' ? obj.flow : undefined;
+
+      obj.ports.forEach((pVal, idx) => {
+        const port = Number(pVal);
+        if (!port) return;
+        const name = `${baseRemark} · VLESS-${port}`;
+        const tlsObj: Record<string, unknown> = {
+          enabled: true,
+          server_name: sni,
+          utls: { enabled: true, fingerprint: fp }
+        };
+        if (pbk) {
+          tlsObj.reality = { enabled: true, public_key: pbk, short_id: sid };
+        }
+        const outbound: Record<string, unknown> = {
+          type: 'vless',
+          tag: 'proxy',
+          server: host,
+          server_port: port,
+          uuid: obj.uuid,
+          ...(flow ? { flow } : {}),
+          tls: tlsObj
+        };
+        results.push({
+          id: makeId('json', idx, name),
+          code: geo.code,
+          country: geo.country,
+          city: name,
+          host,
+          port,
+          asn: pbk ? 'VLESS Reality' : 'VLESS TLS',
+          ip: host,
+          lon: geo.lon,
+          lat: geo.lat,
+          ping: 45,
+          load: 20,
+          tags: Array.from(new Set([...geo.tags, 'streaming'])),
+          fav: idx === 0,
+          source: 'subscription',
+          protocolType: 'vless',
+          outbound
+        });
+      });
+    }
+
+    // Optional nested Hysteria2 block
+    if (obj.hysteria2 && typeof obj.hysteria2 === 'object') {
+      const hy = obj.hysteria2 as Record<string, unknown>;
+      const port = Number(hy.port);
+      if (port && typeof hy.password === 'string') {
+        const name = `${baseRemark} · Hysteria2-${port}`;
+        const outbound: Record<string, unknown> = {
+          type: 'hysteria2',
+          tag: 'proxy',
+          server: host,
+          server_port: port,
+          password: hy.password,
+          tls: {
+            enabled: true,
+            server_name: String(hy.sni || 'www.bing.com'),
+            insecure: Boolean(hy.insecure)
+          }
+        };
+        if (typeof hy.obfs === 'string' && typeof hy.obfs_password === 'string') {
+          outbound.obfs = { type: hy.obfs, password: hy.obfs_password };
+        }
+        results.push({
+          id: makeId('json-hy2', results.length, name),
+          code: geo.code,
+          country: geo.country,
+          city: name,
+          host,
+          port,
+          asn: hy.obfs ? `Hysteria2 (${String(hy.obfs)})` : 'Hysteria2 QUIC',
+          ip: host,
+          lon: geo.lon,
+          lat: geo.lat,
+          ping: 38,
+          load: 18,
+          tags: Array.from(new Set([...geo.tags, 'streaming'])),
+          fav: true,
+          source: 'subscription',
+          protocolType: 'hysteria2',
+          outbound
+        });
+      }
+    }
+
+    return results;
+  } catch {
+    return [];
+  }
+}
+
 export function parseSubscriptionContent(rawText: string, label?: string): VpnNode[] {
   const decoded = tryDecodeBase64(rawText);
+
+  if (decoded.trimStart().startsWith('{')) {
+    const jsonNodes = parseCustomNodeJson(decoded, label);
+    if (jsonNodes.length > 0) return jsonNodes;
+  }
 
   if (decoded.includes('[Interface]') && decoded.includes('[Peer]')) {
     return parseWireGuardConf(decoded, label);

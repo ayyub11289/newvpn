@@ -38,7 +38,7 @@ const vlessNodes = parser.parseSubscriptionContent(
   'vless://11111111-1111-1111-1111-111111111111@hk.example.com:443?security=reality&pbk=AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA&sid=abcd&sni=apple.com&fp=chrome#HK-IEPL-01'
 );
 const hy2Nodes = parser.parseSubscriptionContent(
-  'hysteria2://supersecret@sg.example.com:8443?sni=sg.example.com#SG-HY2'
+  'hysteria2://supersecret@sg.example.com:8443?sni=sg.example.com&insecure=1&obfs=salamander&obfs-password=obfssecret#SG-HY2'
 );
 
 const commonSecurity = [

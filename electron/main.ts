@@ -336,12 +336,15 @@ function registerIpc(): void {
   ipcMain.handle('diag:leak-audit', async (_e, takeoverMode: TakeoverMode, netShield: boolean, killSwitch: boolean) => {
     const connected = latestTelemetry?.status === 'connected';
     const mode = latestTelemetry?.engineMode ?? 'demo';
+    const ports = manager!.getActivePorts();
     return runRealLeakAudit({
       connected,
       engineMode: mode,
       takeoverMode,
       netShieldEnabled: netShield,
-      killSwitchEnabled: killSwitch
+      killSwitchEnabled: killSwitch,
+      mixedPort: ports.mixedPort,
+      clashApiPort: ports.clashApiPort
     });
   });
 

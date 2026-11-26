@@ -16,6 +16,7 @@ interface PowerDialProps {
   multiHop: boolean;
   blockedCount: number;
   capabilities: CoreCapabilities;
+  lastError?: string;
   onToggleConnect: () => void;
   onChangeProtocol: (p: ProtocolMode) => void;
   onChangeTakeover: (m: TakeoverMode) => void;
@@ -58,6 +59,7 @@ export const PowerDial: React.FC<PowerDialProps> = ({
   multiHop,
   blockedCount,
   capabilities,
+  lastError,
   onToggleConnect,
   onChangeProtocol,
   onChangeTakeover,
@@ -184,11 +186,16 @@ export const PowerDial: React.FC<PowerDialProps> = ({
                 ? `流量经 ${entryNode.country} 入口中转至 ${activeNode.city}`
                 : takeoverMode === 'tun'
                 ? 'Wintun 虚拟网卡已接管全系统 TCP/UDP 流量'
-                : 'Win11 系统代理已接管 (127.0.0.1:7890)'
+                : 'Win11 系统代理已接管'
               : status === 'connecting'
               ? stepText
               : '点击上方机械旋钮即可接管系统网络'}
           </p>
+          {status === 'disconnected' && lastError && (
+            <div className="mt-2 px-3 py-2 rounded-xl border border-[var(--error)] bg-[var(--secondary)] text-left text-xs text-[var(--error)] break-all">
+              连接失败：{lastError}
+            </div>
+          )}
         </div>
 
         {/* Ephemeral Key Strip */}
