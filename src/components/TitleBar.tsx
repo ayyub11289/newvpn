@@ -75,7 +75,7 @@ export const TitleBar: React.FC<TitleBarProps> = ({
           <div className="flex items-center gap-2">
             <span className="text-sm font-semibold tracking-tight">VEIL</span>
             <span className="text-xs font-mono px-1.5 py-0.5 rounded-md glass-well text-[var(--muted-foreground)]">
-              WIN11 · {capabilities.engineMode === 'live' ? 'LIVE CORE' : 'SANDBOX'}
+              WIN11 · {capabilities.hasSingBox ? 'LIVE CORE' : 'NO CORE'}
             </span>
             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-medium glass-well">
               <span

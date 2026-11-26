@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { DEFAULT_AUTOPILOT, DEFAULT_DEMO_NODES, DEFAULT_SECURITY, DEFAULT_SPLIT_APPS } from '../data/worldBitmap';
+import { DEFAULT_AUTOPILOT, DEFAULT_SECURITY, DEFAULT_SPLIT_APPS } from '../data/worldBitmap';
 import { TelemetrySnapshot, VaultState, VpnNode } from '../types';
 import { soundEngine } from '../audio/soundEngine';
 
@@ -25,15 +25,15 @@ export const TrayPopoverView: React.FC = () => {
   const [snap, setSnap] = useState<TelemetrySnapshot>({
     status: 'disconnected',
     handshakeStep: 0,
-    engineMode: 'demo',
+    engineMode: 'live',
     downMBps: 0,
     upMBps: 0,
     totalGB: 0,
     uptimeSeconds: 0,
-    blockedCount: 1428,
+    blockedCount: 0,
     activeIp: '114.88.204.17',
-    activePing: 34,
-    activeNodeId: 'jp-tyo',
+    activePing: 0,
+    activeNodeId: '',
     wifiSsid: null,
     wifiOpen: false,
     killSwitchTripped: false
@@ -50,25 +50,24 @@ export const TrayPopoverView: React.FC = () => {
     };
   }, []);
 
-  // Always prioritize real imported nodes from encrypted vault over demo nodes
-  const allNodes = useMemo<VpnNode[]>(() => {
-    return vault.customNodes.length > 0 ? [...vault.customNodes, ...DEFAULT_DEMO_NODES] : DEFAULT_DEMO_NODES;
-  }, [vault.customNodes]);
+  const allNodes = vault.customNodes;
 
-  const activeNode = useMemo(() => {
+  const activeNode = useMemo<VpnNode | null>(() => {
+    if (allNodes.length === 0) return null;
     const preferredId = vault.activeNodeId || snap.activeNodeId;
     return allNodes.find((n) => n.id === preferredId) || allNodes[0];
   }, [allNodes, vault.activeNodeId, snap.activeNodeId]);
 
-  const entryNode = useMemo(() => {
-    return allNodes.find((n) => n.id === vault.entryNodeId) || allNodes[Math.min(6, allNodes.length - 1)];
+  const entryNode = useMemo<VpnNode | null>(() => {
+    if (allNodes.length === 0) return null;
+    return allNodes.find((n) => n.id === vault.entryNodeId) || allNodes[0];
   }, [allNodes, vault.entryNodeId]);
 
   const connectNode = (target: VpnNode) => {
     void window.veilAPI?.updateVault({ activeNodeId: target.id });
     void window.veilAPI?.connect({
       node: target,
-      entryNode,
+      entryNode: entryNode || undefined,
       multiHop: vault.multiHop,
       protocol: vault.protocol,
       takeoverMode: vault.takeoverMode,
@@ -79,6 +78,10 @@ export const TrayPopoverView: React.FC = () => {
   };
 
   const handleToggle = () => {
+    if (!activeNode) {
+      void window.veilAPI?.windowControl('show-main');
+      return;
+    }
     if (snap.status === 'connected' || snap.status === 'connecting') {
       soundEngine.playDisconnect();
       void window.veilAPI?.disconnect();
@@ -87,10 +90,6 @@ export const TrayPopoverView: React.FC = () => {
       connectNode(activeNode);
     }
   };
-
-  const quickList = useMemo(() => {
-    return (vault.customNodes.length > 0 ? vault.customNodes : DEFAULT_DEMO_NODES).slice(0, 4);
-  }, [vault.customNodes]);
 
   return (
     <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] p-3 flex flex-col justify-between relative overflow-hidden">
@@ -112,7 +111,7 @@ export const TrayPopoverView: React.FC = () => {
           <div className="flex items-center gap-2">
             <span className="font-semibold tracking-tight">VEIL VPN</span>
             <span className="font-mono px-1.5 py-0.5 rounded glass-well text-[var(--muted-foreground)]">
-              {snap.engineMode === 'live' ? 'LIVE' : 'DEMO'}
+              LIVE
             </span>
           </div>
           <span className="font-mono tabular-nums text-[var(--muted-foreground)]">
@@ -162,17 +161,19 @@ export const TrayPopoverView: React.FC = () => {
           </button>
           <div className="min-w-0">
             <div className="text-sm font-semibold">
-              {snap.status === 'connected'
+              {!activeNode
+                ? '尚未导入节点'
+                : snap.status === 'connected'
                 ? '加密隧道已保护'
                 : snap.status === 'connecting'
                 ? '正在建立隧道...'
                 : '当前未连接'}
             </div>
             <div className="text-xs text-[var(--muted-foreground)] truncate mt-0.5">
-              {activeNode.country} · {activeNode.city}
+              {activeNode ? `${activeNode.country} · ${activeNode.city}` : '请打开主界面导入节点配置'}
             </div>
             <div className="text-xs font-mono text-[var(--muted-foreground)] mt-0.5">
-              {activeNode.source === 'demo' ? '演示节点' : activeNode.protocolType.toUpperCase()} · {snap.activeIp}
+              {activeNode ? `${activeNode.protocolType.toUpperCase()} · ${snap.activeIp}` : 'DPAPI 加密库已就绪'}
             </div>
           </div>
         </div>
@@ -189,29 +190,37 @@ export const TrayPopoverView: React.FC = () => {
         </div>
 
         <div className="flex flex-col gap-1.5">
-          <span className="text-xs text-[var(--muted-foreground)]">
-            {vault.customNodes.length > 0 ? '自有节点快捷切线' : '演示节点（请先在主界面导入订阅）'}
-          </span>
-          <div className="grid grid-cols-2 gap-1.5">
-            {quickList.map((n) => (
-              <button
-                key={n.id}
-                type="button"
-                onClick={() => {
-                  soundEngine.playTick(960);
-                  connectNode(n);
-                }}
-                className={`px-2.5 py-2 rounded-xl text-xs font-medium text-left transition cursor-pointer flex items-center justify-between ${
-                  n.id === activeNode.id
-                    ? 'glass-surface font-semibold'
-                    : 'glass-well text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
-                }`}
-              >
-                <span className="truncate">{n.code} {n.city.split(' ')[0]}</span>
-                <span className="font-mono opacity-75">{n.ping}ms</span>
-              </button>
-            ))}
-          </div>
+          <span className="text-xs text-[var(--muted-foreground)]">我的节点快捷切线</span>
+          {allNodes.length === 0 ? (
+            <button
+              type="button"
+              onClick={() => window.veilAPI?.windowControl('show-main')}
+              className="p-2.5 rounded-xl glass-well text-xs text-[var(--link)] hover:underline text-center cursor-pointer"
+            >
+              + 打开主界面导入节点
+            </button>
+          ) : (
+            <div className="grid grid-cols-2 gap-1.5">
+              {allNodes.slice(0, 4).map((n) => (
+                <button
+                  key={n.id}
+                  type="button"
+                  onClick={() => {
+                    soundEngine.playTick(960);
+                    connectNode(n);
+                  }}
+                  className={`px-2.5 py-2 rounded-xl text-xs font-medium text-left transition cursor-pointer flex items-center justify-between ${
+                    activeNode && n.id === activeNode.id
+                      ? 'glass-surface font-semibold'
+                      : 'glass-well text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
+                  }`}
+                >
+                  <span className="truncate">{n.code} {n.city.split(' ')[0]}</span>
+                  <span className="font-mono opacity-75">{n.ping}ms</span>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <button

@@ -7,8 +7,8 @@ interface PowerDialProps {
   uptimeSeconds: number;
   keyHash: string;
   keyRotateSeconds: number;
-  activeNode: VpnNode;
-  entryNode: VpnNode;
+  activeNode: VpnNode | null;
+  entryNode: VpnNode | null;
   entryCandidates: VpnNode[];
   effectivePing: number;
   protocol: ProtocolMode;
@@ -23,6 +23,7 @@ interface PowerDialProps {
   onToggleMultiHop: () => void;
   onChangeEntryNode: (id: string) => void;
   onOpenNodes: () => void;
+  onOpenImport: () => void;
   onOpenDiagnostics: () => void;
   onRelaunchAdmin: () => void;
 }
@@ -66,6 +67,7 @@ export const PowerDial: React.FC<PowerDialProps> = ({
   onToggleMultiHop,
   onChangeEntryNode,
   onOpenNodes,
+  onOpenImport,
   onOpenDiagnostics,
   onRelaunchAdmin
 }) => {
@@ -79,7 +81,7 @@ export const PowerDial: React.FC<PowerDialProps> = ({
   const stepText = [
     '1/3 正在编译防泄露配置并执行密钥协商...',
     '2/3 挂载本地隧道接口与系统路由守卫...',
-    `3/3 验证至 ${activeNode.city} 的加密出口...`
+    `3/3 验证至 ${activeNode?.city ?? '远端节点'} 的加密出口...`
   ][Math.min(2, handshakeStep)];
 
   return (
@@ -140,7 +142,7 @@ export const PowerDial: React.FC<PowerDialProps> = ({
 
           <button
             type="button"
-            onClick={onToggleConnect}
+            onClick={activeNode ? onToggleConnect : onOpenImport}
             aria-label="切换 VPN 连接"
             className="power-dome relative z-10 w-28 h-28 rounded-full flex flex-col items-center justify-center gap-1.5 hover:scale-[1.03] active:scale-[0.97] transition-all cursor-pointer"
           >
@@ -165,14 +167,16 @@ export const PowerDial: React.FC<PowerDialProps> = ({
               <line x1="12" y1="2" x2="12" y2="12" />
             </svg>
             <span className="text-xs font-medium text-[var(--muted-foreground)]">
-              {status === 'connected' ? '点击断开' : status === 'connecting' ? '取消连接' : '一键连接'}
+              {!activeNode ? '先导入节点' : status === 'connected' ? '点击断开' : status === 'connecting' ? '取消连接' : '一键连接'}
             </span>
           </button>
         </div>
 
         <div className="relative z-10 mt-1 space-y-1">
           <h2 className="text-base font-semibold tracking-tight">
-            {status === 'connected'
+            {!activeNode
+              ? '尚未导入节点'
+              : status === 'connected'
               ? multiHop
                 ? '双重加密跳板运行中'
                 : '加密隧道已建立'
@@ -181,11 +185,13 @@ export const PowerDial: React.FC<PowerDialProps> = ({
               : '当前网络未加密'}
           </h2>
           <p className="text-xs text-[var(--muted-foreground)]">
-            {status === 'connected'
-              ? multiHop
+            {!activeNode
+              ? '点击上方按钮或右上角「+ 导入节点」添加你的真实节点'
+              : status === 'connected'
+              ? multiHop && entryNode
                 ? `流量经 ${entryNode.country} 入口中转至 ${activeNode.city}`
                 : takeoverMode === 'tun'
-                ? 'Wintun 虚拟网卡已接管全系统 TCP/UDP 流量'
+                ? '虚拟网卡 (Ethernet-Net0) 已接管全系统流量'
                 : 'Win11 系统代理已接管'
               : status === 'connecting'
               ? stepText
@@ -201,7 +207,7 @@ export const PowerDial: React.FC<PowerDialProps> = ({
         {/* Ephemeral Key Strip */}
         <div className="relative z-10 w-full mt-3.5 px-3 py-2 rounded-xl glass-well flex items-center justify-between text-xs font-mono">
           <span className="text-[var(--muted-foreground)]">
-            会话公钥 <span className="text-[var(--foreground)]">{keyHash}</span>
+            会话指纹 <span className="text-[var(--foreground)]">{keyHash}</span>
           </span>
           <span className="tabular-nums text-[var(--muted-foreground)]">
             {status === 'connected' ? `轮换 ${fmtShort(keyRotateSeconds)}` : '待机中'}
@@ -212,28 +218,42 @@ export const PowerDial: React.FC<PowerDialProps> = ({
         <div className="relative z-10 w-full mt-3.5 pt-3.5 border-t border-[var(--card-border)] flex flex-col gap-2 text-left">
           <div className="flex items-center justify-between">
             <span className="text-xs text-[var(--muted-foreground)]">当前出口节点</span>
-            <button type="button" onClick={onOpenNodes} className="text-xs text-[var(--link)] hover:underline cursor-pointer">
-              全部节点 →
+            <button
+              type="button"
+              onClick={activeNode ? onOpenNodes : onOpenImport}
+              className="text-xs text-[var(--link)] hover:underline cursor-pointer"
+            >
+              {activeNode ? '全部节点 →' : '+ 导入节点 →'}
             </button>
           </div>
-          <div className="p-3 rounded-xl glass-well flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2.5 min-w-0">
-              <span className="w-8 h-8 rounded-lg glass-surface font-mono text-xs font-semibold flex items-center justify-center shrink-0">
-                {activeNode.code}
-              </span>
-              <div className="min-w-0">
-                <div className="text-xs font-semibold truncate">
-                  {activeNode.country} · {activeNode.city}
-                </div>
-                <div className="text-xs font-mono text-[var(--muted-foreground)] truncate">
-                  {activeNode.host} · {effectivePing} ms
+          {activeNode ? (
+            <div className="p-3 rounded-xl glass-well flex items-center justify-between gap-2">
+              <div className="flex items-center gap-2.5 min-w-0">
+                <span className="w-8 h-8 rounded-lg glass-surface font-mono text-xs font-semibold flex items-center justify-center shrink-0">
+                  {activeNode.code}
+                </span>
+                <div className="min-w-0">
+                  <div className="text-xs font-semibold truncate">
+                    {activeNode.country} · {activeNode.city}
+                  </div>
+                  <div className="text-xs font-mono text-[var(--muted-foreground)] truncate">
+                    {activeNode.host} · {effectivePing} ms
+                  </div>
                 </div>
               </div>
+              <span className="text-xs font-mono px-2 py-0.5 rounded-md glass-surface shrink-0">
+                {activeNode.protocolType.toUpperCase()}
+              </span>
             </div>
-            <span className="text-xs font-mono px-2 py-0.5 rounded-md glass-surface shrink-0">
-              负载 {activeNode.load}%
-            </span>
-          </div>
+          ) : (
+            <button
+              type="button"
+              onClick={onOpenImport}
+              className="w-full p-3 rounded-xl glass-well text-xs text-[var(--muted-foreground)] hover:text-[var(--foreground)] transition text-center cursor-pointer"
+            >
+              + 点击粘贴订阅链接、JSON 或 WireGuard 配置
+            </button>
+          )}
         </div>
       </div>
 
@@ -320,11 +340,11 @@ export const PowerDial: React.FC<PowerDialProps> = ({
             />
           </div>
 
-          {multiHop && (
+          {multiHop && entryCandidates.length > 0 && (
             <div className="pt-2 border-t border-[var(--border)] flex items-center justify-between gap-2 text-xs">
               <span className="text-[var(--muted-foreground)]">入口跳板</span>
               <select
-                value={entryNode.id}
+                value={entryNode?.id ?? ''}
                 onChange={(e) => onChangeEntryNode(e.target.value)}
                 className="bg-[var(--card)] text-[var(--foreground)] border border-[var(--border)] rounded-lg px-2 py-1 text-xs outline-none cursor-pointer max-w-[175px]"
               >

@@ -166,6 +166,7 @@ export class AppUpdaterController {
 
   async quitAndInstall(): Promise<void> {
     await this.onBeforeInstall();
-    autoUpdater.quitAndInstall(false, true);
+    // Silent one-click replacement + automatic relaunch
+    autoUpdater.quitAndInstall(true, true);
   }
 }

@@ -30,8 +30,8 @@ win:
   requestedExecutionLevel: asInvoker
 nsis:
   artifactName: VEIL-VPN-${version}-win-${arch}-Setup.${ext}
-  oneClick: false
-  allowToChangeInstallationDirectory: true
+  oneClick: true
+  perMachine: false
   createDesktopShortcut: true
   createStartMenuShortcut: true
   shortcutName: VEIL VPN

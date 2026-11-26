@@ -16,7 +16,6 @@ import {
 } from './types';
 import {
   DEFAULT_AUTOPILOT,
-  DEFAULT_DEMO_NODES,
   DEFAULT_SECURITY,
   DEFAULT_SPLIT_APPS
 } from './data/worldBitmap';
@@ -37,7 +36,7 @@ const LEGACY_NODES_KEY = 'veil_custom_nodes';
 const LEGACY_SUBS_KEY = 'veil_subscriptions_v1';
 
 export const App: React.FC = () => {
-  const [nodes, setNodes] = useState<VpnNode[]>(DEFAULT_DEMO_NODES);
+  const [nodes, setNodes] = useState<VpnNode[]>([]);
   const [subscriptions, setSubscriptions] = useState<SubscriptionProfile[]>([]);
   const [encryptedVault, setEncryptedVault] = useState(true);
 
@@ -48,8 +47,8 @@ export const App: React.FC = () => {
   const [projection, setProjection] = useState<MapProjection>('globe');
   const [status, setStatus] = useState<TunnelStatus>('disconnected');
   const [handshakeStep, setHandshakeStep] = useState(0);
-  const [activeNodeId, setActiveNodeId] = useState(DEFAULT_DEMO_NODES[0].id);
-  const [entryNodeId, setEntryNodeId] = useState('ch-zrh');
+  const [activeNodeId, setActiveNodeId] = useState<string | null>(null);
+  const [entryNodeId, setEntryNodeId] = useState<string | null>(null);
   const [multiHop, setMultiHop] = useState(false);
   const [protocol, setProtocol] = useState<ProtocolMode>('wireguard');
   const [takeoverMode, setTakeoverMode] = useState<TakeoverMode>('system-proxy');
@@ -89,7 +88,7 @@ export const App: React.FC = () => {
 
   const [updateState, setUpdateState] = useState<UpdateState>({
     status: 'idle',
-    currentVersion: '1.1.0',
+    currentVersion: '1.2.0',
     latestVersion: null,
     releaseUrl: 'https://github.com/ayyub11289/newvpn/releases',
     progress: 0,
@@ -112,15 +111,18 @@ export const App: React.FC = () => {
     toastTimerRef.current = window.setTimeout(() => setToast(null), 3200);
   }, []);
 
-  const activeNode = useMemo(() => nodes.find((n) => n.id === activeNodeId) || nodes[0], [nodes, activeNodeId]);
-  const entryNode = useMemo(
-    () => nodes.find((n) => n.id === entryNodeId) || nodes[Math.min(6, nodes.length - 1)],
+  const activeNode = useMemo<VpnNode | null>(
+    () => (nodes.length === 0 ? null : nodes.find((n) => n.id === activeNodeId) || nodes[0]),
+    [nodes, activeNodeId]
+  );
+  const entryNode = useMemo<VpnNode | null>(
+    () => (nodes.length === 0 ? null : nodes.find((n) => n.id === entryNodeId) || nodes[0]),
     [nodes, entryNodeId]
   );
 
   const getEffectivePing = useCallback(
     (node: VpnNode) => {
-      if (!multiHop || node.id === entryNode.id) return node.ping;
+      if (!multiHop || !entryNode || node.id === entryNode.id) return node.ping;
       return Math.round(entryNode.ping * 0.85 + node.ping * 0.65);
     },
     [multiHop, entryNode]
@@ -182,13 +184,14 @@ export const App: React.FC = () => {
       // ignore migration errors
     }
 
-    const merged = [...customNodes, ...DEFAULT_DEMO_NODES];
-    setNodes(merged);
+    setNodes(customNodes);
     setSubscriptions(subs);
-    if (vault.activeNodeId && merged.some((n) => n.id === vault.activeNodeId)) {
+    if (vault.activeNodeId && customNodes.some((n) => n.id === vault.activeNodeId)) {
       setActiveNodeId(vault.activeNodeId);
     } else if (customNodes[0]) {
       setActiveNodeId(customNodes[0].id);
+    } else {
+      setActiveNodeId(null);
     }
     if (vault.entryNodeId) setEntryNodeId(vault.entryNodeId);
     setMultiHop(vault.multiHop);
@@ -206,8 +209,8 @@ export const App: React.FC = () => {
     return window.veilAPI.onVaultChanged((v) => {
       setEncryptedVault(v.encryptedAtRest);
       setSubscriptions(v.subscriptions);
-      setNodes([...v.customNodes, ...DEFAULT_DEMO_NODES]);
-      if (v.activeNodeId) setActiveNodeId(v.activeNodeId);
+      setNodes(v.customNodes);
+      setActiveNodeId(v.activeNodeId || v.customNodes[0]?.id || null);
       if (v.entryNodeId) setEntryNodeId(v.entryNodeId);
       setMultiHop(v.multiHop);
       setProtocol(v.protocol);
@@ -298,7 +301,7 @@ export const App: React.FC = () => {
         });
         await window.veilAPI.connect({
           node: targetNode,
-          entryNode,
+          entryNode: entryNode || undefined,
           multiHop: mh,
           protocol: pr,
           takeoverMode: tm,
@@ -320,8 +323,10 @@ export const App: React.FC = () => {
       soundEngine.playDisconnect();
       if (window.veilAPI) await window.veilAPI.disconnect();
       else setStatus('disconnected');
-    } else {
+    } else if (activeNode) {
       await connectWithNode(activeNode);
+    } else {
+      setImportOpen(true);
     }
   }, [status, activeNode, connectWithNode]);
 
@@ -704,7 +709,7 @@ export const App: React.FC = () => {
                 activeNode={activeNode}
                 entryNode={entryNode}
                 entryCandidates={nodes.slice(0, 10)}
-                effectivePing={getEffectivePing(activeNode)}
+                effectivePing={activeNode ? getEffectivePing(activeNode) : 0}
                 protocol={protocol}
                 takeoverMode={takeoverMode}
                 multiHop={multiHop}
@@ -716,20 +721,20 @@ export const App: React.FC = () => {
                   soundEngine.playTick(900);
                   setProtocol(p);
                   void window.veilAPI?.updateVault({ protocol: p });
-                  if (status === 'connected') void connectWithNode(activeNode, { protocol: p });
+                  if (status === 'connected' && activeNode) void connectWithNode(activeNode, { protocol: p });
                 }}
                 onChangeTakeover={(m) => {
                   soundEngine.playTick(920);
                   setTakeoverMode(m);
                   void window.veilAPI?.updateVault({ takeoverMode: m });
-                  if (status === 'connected') void connectWithNode(activeNode, { takeoverMode: m });
+                  if (status === 'connected' && activeNode) void connectWithNode(activeNode, { takeoverMode: m });
                 }}
                 onToggleMultiHop={() => {
                   soundEngine.playTick(880);
                   const next = !multiHop;
                   setMultiHop(next);
                   void window.veilAPI?.updateVault({ multiHop: next });
-                  if (status === 'connected') void connectWithNode(activeNode, { multiHop: next });
+                  if (status === 'connected' && activeNode) void connectWithNode(activeNode, { multiHop: next });
                 }}
                 onChangeEntryNode={(id) => {
                   soundEngine.playTick(880);
@@ -739,6 +744,10 @@ export const App: React.FC = () => {
                 onOpenNodes={() => {
                   soundEngine.playTick(880);
                   setTab('nodes');
+                }}
+                onOpenImport={() => {
+                  soundEngine.playTick(960);
+                  setImportOpen(true);
                 }}
                 onOpenDiagnostics={() => {
                   soundEngine.playTick(920);
@@ -764,6 +773,7 @@ export const App: React.FC = () => {
                     setProjection(p);
                   }}
                   onSelectNode={handleSelectNode}
+                  onOpenImport={() => setImportOpen(true)}
                   getEffectivePing={getEffectivePing}
                 />
 
@@ -773,12 +783,14 @@ export const App: React.FC = () => {
                   downSpeed={downSpeed}
                   upSpeed={upSpeed}
                   totalGB={totalGB}
-                  effectivePing={getEffectivePing(activeNode)}
+                  effectivePing={activeNode ? getEffectivePing(activeNode) : 0}
                   status={status}
                   lightMode={lightMode}
                   onTriggerBurst={() => {
                     soundEngine.playTick(980);
-                    if (status !== 'connected') {
+                    if (!activeNode) {
+                      setImportOpen(true);
+                    } else if (status !== 'connected') {
                       void connectWithNode(activeNode);
                     } else {
                       void window.veilAPI?.triggerBurst();
@@ -793,7 +805,7 @@ export const App: React.FC = () => {
           {tab === 'nodes' && (
             <NodesView
               nodes={nodes}
-              activeNodeId={activeNode.id}
+              activeNodeId={activeNode?.id ?? null}
               status={status}
               subscriptionCount={subscriptions.length}
               refreshingAllSubs={refreshingAllSubs}
@@ -805,6 +817,17 @@ export const App: React.FC = () => {
                   void persistVaultNodes(next, subscriptions);
                   return next;
                 });
+              }}
+              onDeleteNode={(id) => {
+                soundEngine.playTick(760);
+                setNodes((prev) => {
+                  const next = prev.filter((n) => n.id !== id);
+                  const nextActive = activeNodeId === id ? next[0]?.id ?? null : activeNodeId;
+                  setActiveNodeId(nextActive);
+                  void persistVaultNodes(next, subscriptions, nextActive ?? undefined);
+                  return next;
+                });
+                showToast('已删除该节点');
               }}
               onPingAll={() => void handlePingAll()}
               onRefreshAllSubs={() => void handleRefreshAllSubs()}
@@ -838,8 +861,13 @@ export const App: React.FC = () => {
               }}
               onSimulateWifi={() => {
                 setTab('overview');
-                showToast('检测到未加密热点 "Airport_Free_WiFi"，Auto-Pilot 已自动接管加密隧道');
-                void connectWithNode(activeNode);
+                if (activeNode) {
+                  showToast('检测到未加密热点 "Airport_Free_WiFi"，Auto-Pilot 已自动接管加密隧道');
+                  void connectWithNode(activeNode);
+                } else {
+                  showToast('请先导入真实节点以启用 Auto-Pilot 自动接管');
+                  setImportOpen(true);
+                }
               }}
             />
           )}
@@ -852,7 +880,7 @@ export const App: React.FC = () => {
               multiHop={multiHop}
               activeNode={activeNode}
               entryNode={entryNode}
-              effectivePing={getEffectivePing(activeNode)}
+              effectivePing={activeNode ? getEffectivePing(activeNode) : 0}
               activeIp={activeIp}
               capabilities={capabilities}
               auditItems={auditItems}

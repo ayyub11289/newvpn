@@ -5,14 +5,15 @@ import { soundEngine } from '../audio/soundEngine';
 
 interface SpatialGlobeProps {
   nodes: VpnNode[];
-  activeNode: VpnNode;
-  entryNode: VpnNode;
+  activeNode: VpnNode | null;
+  entryNode: VpnNode | null;
   multiHop: boolean;
   status: TunnelStatus;
   projection: MapProjection;
   lightMode: boolean;
   onChangeProjection: (p: MapProjection) => void;
   onSelectNode: (id: string) => void;
+  onOpenImport: () => void;
   getEffectivePing: (n: VpnNode) => number;
 }
 
@@ -26,6 +27,7 @@ export const SpatialGlobe: React.FC<SpatialGlobeProps> = ({
   lightMode,
   onChangeProjection,
   onSelectNode,
+  onOpenImport,
   getEffectivePing
 }) => {
   const wrapRef = useRef<HTMLDivElement | null>(null);
@@ -49,6 +51,7 @@ export const SpatialGlobe: React.FC<SpatialGlobeProps> = ({
 
   // Fly camera to newly selected node
   useEffect(() => {
+    if (!activeNode) return;
     const toVec = (lon: number, lat: number) => {
       const l = (lon * Math.PI) / 180;
       const p = (lat * Math.PI) / 180;
@@ -65,7 +68,7 @@ export const SpatialGlobe: React.FC<SpatialGlobeProps> = ({
     mz /= len;
     camRef.current.targetLon = (Math.atan2(mx, mz) * 180) / Math.PI;
     camRef.current.targetLat = Math.max(-42, Math.min(52, (Math.asin(my) * 180) / Math.PI));
-  }, [activeNode.id, activeNode.lon, activeNode.lat, projection]);
+  }, [activeNode?.id, activeNode?.lon, activeNode?.lat, projection]);
 
   const propsRef = useRef({
     nodes,
@@ -425,8 +428,8 @@ export const SpatialGlobe: React.FC<SpatialGlobeProps> = ({
       const activeColor =
         p.status === 'connected' ? successColor : p.status === 'connecting' ? warningColor : primaryColor;
 
-      if (p.status !== 'disconnected') {
-        if (p.multiHop && p.entryNode.id !== p.activeNode.id) {
+      if (p.status !== 'disconnected' && p.activeNode) {
+        if (p.multiHop && p.entryNode && p.entryNode.id !== p.activeNode.id) {
           drawRouteArc(ORIGIN.lon, ORIGIN.lat, p.entryNode.lon, p.entryNode.lat, primaryColor, primaryColor, p.status === 'connected', 0, gp);
           drawRouteArc(p.entryNode.lon, p.entryNode.lat, p.activeNode.lon, p.activeNode.lat, primaryColor, activeColor, p.status === 'connected', 0.45, gp);
         } else {
@@ -445,8 +448,8 @@ export const SpatialGlobe: React.FC<SpatialGlobeProps> = ({
       p.nodes.forEach((n) => {
         const pt = projectPoint(n.lon, n.lat, gp);
         if (!pt.visible || pt.rz < 0) return;
-        const isTarget = n.id === p.activeNode.id;
-        const isEntry = p.multiHop && n.id === p.entryNode.id && !isTarget;
+        const isTarget = p.activeNode ? n.id === p.activeNode.id : false;
+        const isEntry = p.multiHop && p.entryNode ? n.id === p.entryNode.id && !isTarget : false;
         const isHovered = n.id === cam.hoveredId;
 
         if (isTarget && p.status === 'connected') {
@@ -581,10 +584,12 @@ export const SpatialGlobe: React.FC<SpatialGlobeProps> = ({
 
         <div className="pointer-events-none absolute top-3.5 left-3.5 flex flex-wrap items-center gap-2">
           <div className="glass-hud rounded-xl px-3 py-1.5 text-xs font-mono flex items-center gap-2">
-            <span className="text-[var(--muted-foreground)]">SHANGHAI</span>
+            <span className="text-[var(--muted-foreground)]">LOCAL</span>
             <span className="opacity-60">⟶</span>
             <span className="font-semibold text-[var(--foreground)]">
-              {multiHop && entryNode.id !== activeNode.id
+              {!activeNode
+                ? '尚未导入节点'
+                : multiHop && entryNode && entryNode.id !== activeNode.id
                 ? `${entryNode.city} ⟶ ${activeNode.city}`
                 : `${activeNode.code} · ${activeNode.city}`}
             </span>
@@ -627,28 +632,38 @@ export const SpatialGlobe: React.FC<SpatialGlobeProps> = ({
 
       {/* Quick-Select Strip */}
       <div className="relative z-10 px-3.5 py-2.5 border-t border-[var(--card-border)] glass-well flex items-center gap-2 overflow-x-auto">
-        <span className="text-xs text-[var(--muted-foreground)] shrink-0 mr-1">专线飞跃:</span>
-        <div className="flex items-center gap-1.5">
-          {nodes.slice(0, 7).map((n) => {
-            const active = n.id === activeNode.id;
-            return (
-              <button
-                key={n.id}
-                type="button"
-                onClick={() => onSelectNode(n.id)}
-                className={`px-2.5 py-1 rounded-lg text-xs font-medium shrink-0 transition cursor-pointer flex items-center gap-1.5 ${
-                  active
-                    ? 'glass-surface text-[var(--foreground)] font-semibold'
-                    : 'border border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
-                }`}
-              >
-                <span className="font-mono font-semibold">{n.code}</span>
-                <span>{n.city}</span>
-                <span className="font-mono opacity-70">{getEffectivePing(n)}ms</span>
-              </button>
-            );
-          })}
-        </div>
+        <span className="text-xs text-[var(--muted-foreground)] shrink-0 mr-1">我的线路:</span>
+        {nodes.length === 0 ? (
+          <button
+            type="button"
+            onClick={onOpenImport}
+            className="text-xs text-[var(--link)] hover:underline cursor-pointer"
+          >
+            暂无节点，点击这里导入你的订阅链接 / JSON / WireGuard 配置 →
+          </button>
+        ) : (
+          <div className="flex items-center gap-1.5">
+            {nodes.slice(0, 7).map((n) => {
+              const active = activeNode ? n.id === activeNode.id : false;
+              return (
+                <button
+                  key={n.id}
+                  type="button"
+                  onClick={() => onSelectNode(n.id)}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium shrink-0 transition cursor-pointer flex items-center gap-1.5 ${
+                    active
+                      ? 'glass-surface text-[var(--foreground)] font-semibold'
+                      : 'border border-transparent text-[var(--muted-foreground)] hover:text-[var(--foreground)]'
+                  }`}
+                >
+                  <span className="font-mono font-semibold">{n.code}</span>
+                  <span>{n.city}</span>
+                  <span className="font-mono opacity-70">{getEffectivePing(n)}ms</span>
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );

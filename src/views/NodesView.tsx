@@ -3,12 +3,13 @@ import { TunnelStatus, VpnNode } from '../types';
 
 interface NodesViewProps {
   nodes: VpnNode[];
-  activeNodeId: string;
+  activeNodeId: string | null;
   status: TunnelStatus;
   subscriptionCount: number;
   refreshingAllSubs: boolean;
   onSelectNode: (id: string) => void;
   onToggleFav: (id: string) => void;
+  onDeleteNode: (id: string) => void;
   onPingAll: () => void;
   onRefreshAllSubs: () => void;
   onOpenImport: () => void;
@@ -23,20 +24,20 @@ export const NodesView: React.FC<NodesViewProps> = ({
   refreshingAllSubs,
   onSelectNode,
   onToggleFav,
+  onDeleteNode,
   onPingAll,
   onRefreshAllSubs,
   onOpenImport,
   getEffectivePing
 }) => {
-  const [filter, setFilter] = useState<'all' | 'asia' | 'streaming' | 'privacy' | 'fav' | 'custom'>('all');
+  const [filter, setFilter] = useState<'all' | 'asia' | 'streaming' | 'privacy' | 'fav'>('all');
   const [search, setSearch] = useState('');
 
   const filtered = useMemo(() => {
     const q = search.trim().toLowerCase();
     return nodes.filter((n) => {
       if (filter === 'fav' && !n.fav) return false;
-      if (filter === 'custom' && n.source === 'demo') return false;
-      if (!['all', 'fav', 'custom'].includes(filter) && !n.tags.includes(filter)) return false;
+      if (!['all', 'fav'].includes(filter) && !n.tags.includes(filter)) return false;
       if (q && !`${n.city} ${n.country} ${n.code} ${n.host} ${n.asn}`.toLowerCase().includes(q)) return false;
       return true;
     });
@@ -44,10 +45,9 @@ export const NodesView: React.FC<NodesViewProps> = ({
 
   const filterTabs: Array<{ id: typeof filter; label: string }> = [
     { id: 'all', label: '全部节点' },
-    { id: 'custom', label: '已导入自有节点' },
-    { id: 'asia', label: '亚太低延迟' },
-    { id: 'streaming', label: 'AI / 流媒体解锁' },
-    { id: 'privacy', label: '隐私避风港' },
+    { id: 'asia', label: '亚太' },
+    { id: 'streaming', label: '流媒体 / AI' },
+    { id: 'privacy', label: '隐私专线' },
     { id: 'fav', label: '★ 收藏' }
   ];
 
@@ -107,79 +107,106 @@ export const NodesView: React.FC<NodesViewProps> = ({
           </div>
         </div>
 
-        <div className="relative z-10 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-          {filtered.map((n) => {
-            const isCurrent = n.id === activeNodeId;
-            const ping = getEffectivePing(n);
-            const pingColor = ping < 0 ? 'var(--error)' : ping < 60 ? 'var(--success)' : ping < 175 ? 'var(--warning)' : 'var(--muted-foreground)';
-            return (
-              <div
-                key={n.id}
-                className={`p-3.5 rounded-2xl transition flex flex-col gap-3 ${
-                  isCurrent ? 'glass-surface border-[var(--primary)]' : 'glass-well hover:opacity-95'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <span className="w-9 h-9 rounded-xl glass-surface font-mono text-xs font-semibold flex items-center justify-center shrink-0">
-                      {n.code}
-                    </span>
-                    <div className="min-w-0">
-                      <div className="text-xs font-semibold truncate">
-                        {n.country} · {n.city}
+        {nodes.length === 0 ? (
+          <div className="relative z-10 py-14 flex flex-col items-center justify-center text-center gap-3">
+            <div className="w-12 h-12 rounded-2xl glass-well flex items-center justify-center text-lg">🌐</div>
+            <div className="space-y-1">
+              <div className="text-sm font-semibold">节点列表为空</div>
+              <p className="text-xs text-[var(--muted-foreground)]">
+                演示节点已移除，请导入你自己的订阅链接、节点 URI、WireGuard .conf 或 JSON 配置文件
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={onOpenImport}
+              className="mt-1 px-4 py-2 rounded-xl bg-[var(--primary)] text-[var(--primary-foreground)] text-xs font-semibold hover:opacity-90 transition cursor-pointer"
+            >
+              + 立即导入真实节点
+            </button>
+          </div>
+        ) : (
+          <div className="relative z-10 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+            {filtered.map((n) => {
+              const isCurrent = n.id === activeNodeId;
+              const ping = getEffectivePing(n);
+              const pingColor =
+                ping < 0
+                  ? 'var(--error)'
+                  : ping < 60
+                  ? 'var(--success)'
+                  : ping < 175
+                  ? 'var(--warning)'
+                  : 'var(--muted-foreground)';
+              return (
+                <div
+                  key={n.id}
+                  className={`p-3.5 rounded-2xl transition flex flex-col gap-3 ${
+                    isCurrent ? 'glass-surface border-[var(--primary)]' : 'glass-well hover:opacity-95'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span className="w-9 h-9 rounded-xl glass-surface font-mono text-xs font-semibold flex items-center justify-center shrink-0">
+                        {n.code}
+                      </span>
+                      <div className="min-w-0">
+                        <div className="text-xs font-semibold truncate">
+                          {n.country} · {n.city}
+                        </div>
+                        <div className="text-xs font-mono text-[var(--muted-foreground)] truncate">
+                          {n.host}:{n.port}
+                        </div>
                       </div>
-                      <div className="text-xs font-mono text-[var(--muted-foreground)] truncate">{n.host}</div>
+                    </div>
+                    <div className="flex items-center gap-1 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => onToggleFav(n.id)}
+                        className={`text-sm leading-none px-1.5 py-1 rounded cursor-pointer ${
+                          n.fav ? 'text-[var(--warning)]' : 'text-[var(--muted-foreground)] opacity-45 hover:opacity-100'
+                        }`}
+                        title="收藏节点"
+                      >
+                        ★
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => onDeleteNode(n.id)}
+                        className="text-xs leading-none px-1.5 py-1 rounded text-[var(--muted-foreground)] hover:text-[var(--error)] cursor-pointer"
+                        title="删除节点"
+                      >
+                        ✕
+                      </button>
                     </div>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => onToggleFav(n.id)}
-                    className={`text-sm leading-none px-1.5 py-1 rounded cursor-pointer ${
-                      n.fav ? 'text-[var(--warning)]' : 'text-[var(--muted-foreground)] opacity-45 hover:opacity-100'
-                    }`}
-                  >
-                    ★
-                  </button>
-                </div>
 
-                <div className="flex items-center justify-between gap-2 text-xs">
-                  <div className="flex items-center gap-2">
+                  <div className="flex items-center justify-between gap-2 text-xs">
                     <span className="font-mono tabular-nums font-medium" style={{ color: pingColor }}>
                       {ping < 0 ? '超时' : `${ping} ms`}
                     </span>
-                    <span className="text-[var(--muted-foreground)]">· 负载 {n.load}%</span>
+                    <span className="px-1.5 py-0.5 rounded-md glass-surface text-xs font-mono text-[var(--muted-foreground)]">
+                      {n.protocolType.toUpperCase()}
+                    </span>
                   </div>
-                  <span className="px-1.5 py-0.5 rounded-md glass-surface text-xs font-mono text-[var(--muted-foreground)]">
-                    {n.source === 'demo' ? '演示节点' : n.protocolType.toUpperCase()}
-                  </span>
-                </div>
 
-                <div className="flex items-center justify-between gap-3 pt-1">
-                  <div className="flex-1 h-1.5 rounded-full bg-[var(--border)] overflow-hidden">
-                    <div
-                      className="h-full rounded-full"
-                      style={{
-                        width: `${n.load}%`,
-                        background: n.load > 65 ? 'var(--warning)' : 'var(--primary)'
-                      }}
-                    />
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => onSelectNode(n.id)}
+                      className={`w-full py-1.5 rounded-lg text-xs font-medium cursor-pointer transition ${
+                        isCurrent && status === 'connected'
+                          ? 'glass-surface text-[var(--foreground)]'
+                          : 'bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90'
+                      }`}
+                    >
+                      {isCurrent && status === 'connected' ? '当前连接中' : '飞跃连接'}
+                    </button>
                   </div>
-                  <button
-                    type="button"
-                    onClick={() => onSelectNode(n.id)}
-                    className={`px-3 py-1 rounded-lg text-xs font-medium cursor-pointer transition ${
-                      isCurrent && status === 'connected'
-                        ? 'glass-surface text-[var(--foreground)]'
-                        : 'bg-[var(--primary)] text-[var(--primary-foreground)] hover:opacity-90'
-                    }`}
-                  >
-                    {isCurrent && status === 'connected' ? '当前连接' : '飞跃连接'}
-                  </button>
                 </div>
-              </div>
-            );
-          })}
-        </div>
+              );
+            })}
+          </div>
+        )}
       </section>
     </main>
   );

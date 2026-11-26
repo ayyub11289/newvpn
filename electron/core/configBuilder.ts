@@ -105,7 +105,7 @@ export function buildSingBoxConfig(
     inbounds.unshift({
       type: 'tun',
       tag: 'tun-in',
-      interface_name: 'VEIL-Tunnel',
+      interface_name: 'Ethernet-Net0',
       address: ['172.19.0.1/30'],
       mtu: req.protocol === 'stealth' ? 1380 : 1420,
       auto_route: true,

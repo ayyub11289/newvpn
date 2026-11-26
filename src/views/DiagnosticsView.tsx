@@ -6,8 +6,8 @@ interface DiagnosticsViewProps {
   protocol: ProtocolMode;
   takeoverMode: TakeoverMode;
   multiHop: boolean;
-  activeNode: VpnNode;
-  entryNode: VpnNode;
+  activeNode: VpnNode | null;
+  entryNode: VpnNode | null;
   effectivePing: number;
   activeIp: string;
   capabilities: CoreCapabilities;
@@ -45,19 +45,19 @@ export const DiagnosticsView: React.FC<DiagnosticsViewProps> = ({
   const hops = [
     {
       step: 'HOP 01',
-      name: takeoverMode === 'tun' ? 'Win11 Wintun 虚拟网卡 (VEIL-Tunnel)' : 'Win11 本地混合代理端口 (127.0.0.1:7890)',
+      name: takeoverMode === 'tun' ? 'Win11 虚拟网卡 (Ethernet-Net0)' : 'Win11 本地混合代理端口 (127.0.0.1:7890)',
       meta: takeoverMode === 'tun' ? '172.19.0.1/30 · 内核态 L3 接管' : 'WinINet 注册表守护 · 崩溃自动还原',
       ping: '0.4 ms'
     },
     {
       step: 'HOP 02',
       name: '本地接入网关 · 加密外壳封装',
-      meta: `协议模式: ${protocol.toUpperCase()} · 0% 丢包`,
+      meta: `协议模式: ${protocol.toUpperCase()}`,
       ping: '5.1 ms'
     }
   ];
 
-  if (multiHop && entryNode.id !== activeNode.id) {
+  if (multiHop && entryNode && activeNode && entryNode.id !== activeNode.id) {
     hops.push({
       step: 'HOP 03',
       name: `隐私入口跳板 · ${entryNode.country} ${entryNode.city}`,
@@ -67,10 +67,10 @@ export const DiagnosticsView: React.FC<DiagnosticsViewProps> = ({
   }
 
   hops.push({
-    step: multiHop && entryNode.id !== activeNode.id ? 'HOP 04' : 'HOP 03',
-    name: `加密出口节点 · ${activeNode.country} ${activeNode.city}`,
-    meta: `${activeNode.host} (${activeNode.asn}) · 出口 ${activeIp}`,
-    ping: `${effectivePing} ms`
+    step: multiHop && entryNode && activeNode && entryNode.id !== activeNode.id ? 'HOP 04' : 'HOP 03',
+    name: activeNode ? `加密出口节点 · ${activeNode.country} ${activeNode.city}` : '尚未选择出口节点',
+    meta: activeNode ? `${activeNode.host} (${activeNode.asn}) · 出口 ${activeIp}` : '请先点击右上角「+ 导入节点」',
+    ping: activeNode ? `${effectivePing} ms` : '--'
   });
 
   return (
